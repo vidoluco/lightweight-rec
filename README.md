@@ -61,11 +61,25 @@ Dopo ogni permesso concesso il servizio riparte da solo; se non parte,
 | `registra stato` | sta girando? quanto spazio? |
 | `tail -f ~/Registrazioni/.trascrivi.log` | seguire una trascrizione in corso |
 
+## Audio completo in call (BlackHole)
+
+Con le cuffie, il microfono sente solo te: le voci degli altri escono nelle
+cuffie e non passano mai per il mic. Per questo, se BlackHole e' installato,
+a ogni avvio lo script crea al volo due dispositivi virtuali:
+
+- **Registra-Out** = uscita attuale (AirPods, casse, quello che c'e' in quel
+  momento) + BlackHole: tu senti tutto come prima, e una copia va nel "cavo"
+- **Registra-In** = microfono + BlackHole: ffmpeg registra questo, cioe'
+  entrambe le voci
+
+Allo stop l'uscita torna quella di prima e i dispositivi spariscono. Senza
+BlackHole tutto funziona lo stesso, ma in cuffia si registra solo la tua voce.
+Unico effetto collaterale mentre registra: i tasti volume non agiscono
+sull'uscita multipla, il volume si regola dall'app della call.
+
 ## Cose sapute e volute
 
 - **Il microfono registra anche gli altri.** In call, dillo o spegni.
-- **Con le cuffie l'audio degli altri non entra** (ffmpeg prende il microfono,
-  non l'audio di sistema). Si risolve con BlackHole, se un giorno serve.
 - Il percorso del vault e' scritto in testa allo script (`VAULT=`): su un Mac
   nuovo va controllato.
 - Se dimentichi lo stop e chiudi il Mac: i file gia' chiusi (uno per ora) sono

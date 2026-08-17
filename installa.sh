@@ -9,6 +9,14 @@ brew list ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
 brew list whisper-cpp >/dev/null 2>&1 || brew install whisper-cpp
 brew list skhd        >/dev/null 2>&1 || brew install koekeishiya/formulae/skhd
 brew list --cask handy >/dev/null 2>&1 || brew install --cask handy
+brew list switchaudio-osx >/dev/null 2>&1 || brew install switchaudio-osx
+# BlackHole e' un driver: chiede la password. Senza, si registra solo il microfono.
+brew list --cask blackhole-2ch >/dev/null 2>&1 || brew install blackhole-2ch || \
+  echo "AVVISO: BlackHole non installato, in call si registrera' solo la tua voce."
+
+echo "== helper CoreAudio (registra-audio) =="
+mkdir -p "$HOME/bin"
+swiftc -O -o "$HOME/bin/registra-audio" "$QUI/registra-audio.swift" -framework CoreAudio
 
 echo "== script in ~/bin =="
 mkdir -p "$HOME/bin"
