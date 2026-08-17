@@ -1,0 +1,214 @@
+#!/bin/bash
+# registra — dettatura + registrazione continua dello schermo, tutto locale e gratuito.
+#
+#   registra          avvia Handy e la registrazione (schermo 1 fps + microfono)
+#   registra stop     ferma, trascrive l'audio e archivia la nota nel vault Obsidian
+#   registra stato    dice se sta girando e quanto spazio occupa
+#   registra toggle   avvia se ferma, ferma se attiva: e' quello legato a Option+R (skhd)
+#
+# Come tiene basso lo spazio:
+#   - schermo a 1 fotogramma al secondo, HEVC hardware a bitrate basso (~110 MB/ora)
+#   - un file per ora, cosi' un crash perde al massimo un'ora
+#   - a ogni avvio cancella i video piu' vecchi di 14 giorni: il disco si
+#     stabilizza sul buffer, non cresce all'infinito
+#   - nel vault Obsidian entra SOLO il testo: i video restano fuori da iCloud
+#
+# ATTENZIONE: registra il microfono in continuo. Se sei in call, stai
+# registrando anche gli altri: dillo o ferma con `registra stop`.
+
+set -euo pipefail
+
+CARTELLA="$HOME/Registrazioni"
+PIDFILE="$CARTELLA/.registra.pid"
+SESSIONE="$CARTELLA/.sessione"          # marcatore: inizio della sessione corrente
+MODELLO="$CARTELLA/.whisper/ggml-large-v3-turbo-q5_0.bin"
+VAULT="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/KB-Ludovico-C98"
+NOTE="$VAULT/Registrazioni"
+GIORNI=14
+
+mkdir -p "$CARTELLA"
+
+in_corso() {
+  # non basta il pidfile: se si preme Option+R due volte di fila il secondo avvio
+  # parte prima che il primo abbia scritto il pid, e due ffmpeg si pestano i piedi
+  # scrivendo lo stesso file. Il processo e' la verita', il pidfile un dettaglio.
+  { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; } \
+    || pgrep -f "avfoundation.*$CARTELLA" >/dev/null 2>&1
+}
+
+# quando si parte da Option+R non c'e' un terminale: la conferma passa da qui
+avvisa() {
+  osascript -e "display notification \"$1\" with title \"registra\"" 2>/dev/null || true
+}
+
+case "${1:-avvia}" in
+
+  toggle)
+    if in_corso; then
+      "$0" stop
+      avvisa "Fermata. Trascrivo e archivio nel vault."
+    else
+      if "$0" avvia; then
+        avvisa "Registrazione avviata: schermo + microfono."
+      else
+        avvisa "NON partita: controlla i permessi di Registrazione Schermo."
+      fi
+    fi
+    ;;
+
+  stop)
+    if in_corso; then
+      # SIGINT, non SIGKILL: ffmpeg chiude il file mp4 in modo pulito
+      kill -INT "$(cat "$PIDFILE")"
+      sleep 2
+      rm -f "$PIDFILE"
+      echo "Registrazione fermata. I file sono in $CARTELLA"
+      # la trascrizione va per conto suo: su ore di audio ci mette minuti,
+      # e non ha senso tenere il terminale in ostaggio
+      nohup "$0" trascrivi >"$CARTELLA/.trascrivi.log" 2>&1 &
+      echo "Trascrivo in sottofondo: la nota comparira' nel vault, cartella Registrazioni."
+      echo "Per seguire: tail -f $CARTELLA/.trascrivi.log"
+    else
+      echo "Non stava registrando."
+      rm -f "$PIDFILE"
+    fi
+    ;;
+
+  stato)
+    if in_corso; then
+      echo "Sta registrando (pid $(cat "$PIDFILE"))."
+    else
+      echo "Ferma."
+    fi
+    echo "Spazio video: $(find "$CARTELLA" -maxdepth 1 -name '*.mp4' -exec du -ch {} + 2>/dev/null | tail -1 | cut -f1)  ($(find "$CARTELLA" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ') file)"
+    ;;
+
+  trascrivi)
+    # trascrive i video della sessione appena chiusa e archivia la nota nel vault
+    [ -f "$MODELLO" ] || { echo "Manca il modello whisper in $MODELLO"; exit 1; }
+    [ -f "$SESSIONE" ] || { echo "Nessuna sessione da trascrivere."; exit 0; }
+
+    FILES=$(find "$CARTELLA" -name '*.mp4' -newer "$SESSIONE" | sort)
+    [ -n "$FILES" ] || { echo "Nessun video nuovo."; exit 0; }
+
+    TESTO=""
+    for f in $FILES; do
+      wav=$(mktemp -t registra).wav
+      ffmpeg -y -hide_banner -loglevel error -i "$f" -ar 16000 -ac 1 "$wav"
+      # -l auto: nei meeting si mescolano italiano, inglese e romeno.
+      # I timestamp restano: sono la correlazione col video, per saltare al minuto giusto.
+      pezzo=$(whisper-cli -m "$MODELLO" -f "$wav" -l auto -np 2>/dev/null)
+      rm -f "$wav"
+      TESTO="$TESTO
+## $(basename "$f" .mp4 | tr '_' ' ')
+$pezzo
+"
+    done
+
+    DATA=$(date '+%Y-%m-%d %H%M')
+    GIORNO=$(date '+%Y-%m-%d')
+
+    # l'archiviazione "intelligente" la fa claude in headless: titolo, tag e
+    # riassunto dal contenuto. Se non risponde, la nota esce comunque, grezza.
+    META=$(echo "$TESTO" | head -c 30000 | claude -p --model haiku \
+      "Questa e' la trascrizione di una sessione di lavoro/meeting registrata al computer. Rispondi in ESATTAMENTE tre righe, senza altro testo:
+TITOLO: <max 6 parole, in italiano, specifico sul contenuto>
+TAG: <2-4 tag brevi in kebab-case separati da spazio, es: meeting berto consulenza>
+RIASSUNTO: <2-3 frasi sul contenuto e le decisioni prese>" 2>/dev/null || true)
+
+    TITOLO=$(echo "$META" | sed -n 's/^TITOLO: *//p' | head -1)
+    TAGS=$(echo "$META"   | sed -n 's/^TAG: *//p'    | head -1)
+    RIASSUNTO=$(echo "$META" | sed -n 's/^RIASSUNTO: *//p' | head -1)
+    [ -n "$TITOLO" ] || TITOLO="Sessione registrata"
+    [ -n "$TAGS" ]   || TAGS="registrazione"
+
+    mkdir -p "$NOTE"
+    NOTA="$NOTE/$DATA $(echo "$TITOLO" | tr -d '/:').md"
+    {
+      echo "---"
+      echo "tags: [$(echo "$TAGS" | tr ' ' ',')]"
+      echo "data: $GIORNO"
+      echo "tipo: registrazione"
+      echo "---"
+      echo
+      echo "# $TITOLO"
+      echo
+      [ -n "$RIASSUNTO" ] && { echo "$RIASSUNTO"; echo; }
+      echo "**Video** (sul Mac, si cancellano dopo $GIORNI giorni):"
+      for f in $FILES; do echo "- \`$f\`"; done
+      echo
+      echo "*I tempi nella trascrizione sono relativi al video dell'ora corrispondente:*"
+      echo "*ogni sezione qui sotto porta il nome del suo file.*"
+      echo
+      echo "$TESTO"
+    } > "$NOTA"
+
+    rm -f "$SESSIONE"
+    echo "Nota creata: $NOTA"
+    ;;
+
+  avvia)
+    # lock atomico: due Option+R ravvicinati non devono far partire due ffmpeg
+    if ! mkdir "$CARTELLA/.lock" 2>/dev/null; then
+      echo "Un avvio e' gia' in corso."
+      exit 0
+    fi
+    trap 'rmdir "$CARTELLA/.lock" 2>/dev/null' EXIT
+
+    if in_corso; then
+      echo "Sta gia' registrando."
+      exit 0
+    fi
+
+    # pulizia del buffer: via i video oltre i $GIORNI giorni
+    trovati=$(find "$CARTELLA" -name '*.mp4' -mtime +"$GIORNI" | wc -l | tr -d ' ')
+    if [ "$trovati" -gt 0 ]; then
+      find "$CARTELLA" -name '*.mp4' -mtime +"$GIORNI" -delete
+      echo "Pulizia: cancellati $trovati video piu' vecchi di $GIORNI giorni."
+    fi
+
+    # gli indici dei dispositivi cambiano (iPhone collegato, OBS...):
+    # si risolvono per nome a ogni avvio
+    LISTA=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
+    VIDEO=$(echo "$LISTA" | sed -n 's/.*\[\([0-9]*\)\] Capture screen 0/\1/p' | head -1)
+    AUDIO=$(echo "$LISTA" | sed -n 's/.*\[\([0-9]*\)\] MacBook Pro Microphone/\1/p' | tail -1)
+    if [ -z "$VIDEO" ] || [ -z "$AUDIO" ]; then
+      echo "Non trovo schermo o microfono. Dispositivi visti:"
+      echo "$LISTA" | grep '^\[AVFoundation'
+      exit 1
+    fi
+
+    open -a Handy
+    touch "$SESSIONE"
+
+    # cattura a 5 fps (1 fps il driver non lo accetta), tiene 1 fps in uscita.
+    # HEVC hardware: CPU quasi a zero. Un file per ora, nome = data e ora.
+    nohup ffmpeg -hide_banner -loglevel error \
+      -f avfoundation -framerate 5 -capture_cursor 1 -i "${VIDEO}:${AUDIO}" \
+      -r 1 -c:v hevc_videotoolbox -b:v 200k -tag:v hvc1 \
+      -c:a aac -ac 1 -b:a 48k \
+      -f segment -segment_time 3600 -reset_timestamps 1 -strftime 1 \
+      "$CARTELLA/%Y-%m-%d_%H-%M.mp4" \
+      >"$CARTELLA/.registra.log" 2>&1 &
+
+    echo $! > "$PIDFILE"
+    sleep 3
+    if in_corso; then
+      echo "Registro: schermo 1 fps + microfono, un file l'ora in $CARTELLA"
+      echo "Handy e' su. Per fermare (e trascrivere nel vault): registra stop"
+    else
+      echo "ffmpeg non e' partito. Ultime righe del log:"
+      tail -5 "$CARTELLA/.registra.log"
+      echo
+      echo "Se parla di permessi: Impostazioni di Sistema > Privacy e Sicurezza >"
+      echo "Registrazione Schermo, e abilita il tuo Terminale. Poi riprova."
+      rm -f "$PIDFILE"
+      exit 1
+    fi
+    ;;
+
+  *)
+    echo "Uso: registra [stop|stato]"
+    exit 1
+    ;;
+esac
