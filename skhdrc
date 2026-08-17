@@ -1,0 +1,6 @@
+# Scorciatoie globali (skhd)
+#
+# Option+R: accende/spegne la registrazione continua (schermo + microfono).
+# La dettatura Handy sta su Option+A, ma quella e' configurata dentro Handy.
+
+alt - r : $HOME/bin/registra toggle
