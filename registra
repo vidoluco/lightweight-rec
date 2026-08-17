@@ -62,6 +62,12 @@ case "${1:-avvia}" in
       kill -INT "$(cat "$PIDFILE")"
       sleep 2
       rm -f "$PIDFILE"
+      # l'uscita torna quella di prima e i dispositivi virtuali si smontano
+      if [ -f "$CARTELLA/.uscita-prima" ]; then
+        switchaudiosource -s "$(cat "$CARTELLA/.uscita-prima")" -t output >/dev/null 2>&1 || true
+        rm -f "$CARTELLA/.uscita-prima"
+      fi
+      "$HOME/bin/registra-audio" giu 2>/dev/null || true
       echo "Registrazione fermata. I file sono in $CARTELLA"
       # la trascrizione va per conto suo: su ore di audio ci mette minuti,
       # e non ha senso tenere il terminale in ostaggio
@@ -167,11 +173,27 @@ RIASSUNTO: <2-3 frasi sul contenuto e le decisioni prese>" 2>/dev/null || true)
       echo "Pulizia: cancellati $trovati video piu' vecchi di $GIORNI giorni."
     fi
 
+    # audio completo: se BlackHole c'e', si creano al volo "Registra-In" (microfono +
+    # audio di sistema) e "Registra-Out" (uscita attuale + BlackHole), cosi' in call
+    # entrano anche le voci degli altri, con AirPods o senza. L'uscita attuale viene
+    # letta adesso, non configurata prima: AirPods in ufficio, casse a casa.
+    # Senza BlackHole si degrada al solo microfono, come sempre.
+    INGRESSO="MacBook Pro Microphone"
+    FILTRO=(-ac 1)
+    if PRIMA=$("$HOME/bin/registra-audio" su 2>/dev/null) && [ -n "$PRIMA" ]; then
+      echo "$PRIMA" > "$CARTELLA/.uscita-prima"
+      switchaudiosource -s "Registra-Out" -t output >/dev/null 2>&1 || true
+      INGRESSO="Registra-In"
+      # canali dell'aggregato: 0 = microfono, 1-2 = audio di sistema via BlackHole
+      FILTRO=(-filter:a "pan=mono|c0=c0+0.5*c1+0.5*c2")
+      echo "Audio completo: microfono + audio di sistema (uscita di prima: $PRIMA)"
+    fi
+
     # gli indici dei dispositivi cambiano (iPhone collegato, OBS...):
-    # si risolvono per nome a ogni avvio
+    # si risolvono per nome a ogni avvio, DOPO aver creato Registra-In
     LISTA=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
     VIDEO=$(echo "$LISTA" | sed -n 's/.*\[\([0-9]*\)\] Capture screen 0/\1/p' | head -1)
-    AUDIO=$(echo "$LISTA" | sed -n 's/.*\[\([0-9]*\)\] MacBook Pro Microphone/\1/p' | tail -1)
+    AUDIO=$(echo "$LISTA" | sed -n "s/.*\[\([0-9]*\)\] $INGRESSO/\1/p" | tail -1)
     if [ -z "$VIDEO" ] || [ -z "$AUDIO" ]; then
       echo "Non trovo schermo o microfono. Dispositivi visti:"
       echo "$LISTA" | grep '^\[AVFoundation'
@@ -186,7 +208,7 @@ RIASSUNTO: <2-3 frasi sul contenuto e le decisioni prese>" 2>/dev/null || true)
     nohup ffmpeg -hide_banner -loglevel error \
       -f avfoundation -framerate 5 -capture_cursor 1 -i "${VIDEO}:${AUDIO}" \
       -r 1 -c:v hevc_videotoolbox -b:v 200k -tag:v hvc1 \
-      -c:a aac -ac 1 -b:a 48k \
+      -c:a aac "${FILTRO[@]}" -b:a 48k \
       -f segment -segment_time 3600 -reset_timestamps 1 -strftime 1 \
       "$CARTELLA/%Y-%m-%d_%H-%M.mp4" \
       >"$CARTELLA/.registra.log" 2>&1 &
