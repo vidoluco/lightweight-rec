@@ -1,6 +1,6 @@
-# Scorciatoie globali (skhd)
+# Global hotkeys (skhd)
 #
-# Option+R: accende/spegne la registrazione continua (schermo + microfono).
-# La dettatura Handy sta su Option+A, ma quella e' configurata dentro Handy.
+# Option+R: toggle continuous recording (screen + microphone).
+# Handy dictation stays on Option+A, configured inside Handy itself.
 
 alt - r : $HOME/bin/registra toggle

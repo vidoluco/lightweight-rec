@@ -1,236 +1,394 @@
 #!/bin/bash
-# registra — dettatura + registrazione continua dello schermo, tutto locale e gratuito.
+# registra — continuous local screen+mic recording, free, no subscription.
 #
-#   registra          avvia Handy e la registrazione (schermo 1 fps + microfono)
-#   registra stop     ferma, trascrive l'audio e archivia la nota nel vault Obsidian
-#   registra stato    dice se sta girando e quanto spazio occupa
-#   registra toggle   avvia se ferma, ferma se attiva: e' quello legato a Option+R (skhd)
+#   registra          start Handy and recording (1 fps screen + microphone)
+#   registra stop     stop, transcribe audio, file a note in the Obsidian vault
+#   registra status   running or not, and how much disk the videos use
+#   registra toggle   start if idle, stop if running: this is Option+R (skhd)
+#   registra screens  list displays; the red dot is what you are recording
 #
-# Come tiene basso lo spazio:
-#   - schermo a 1 fotogramma al secondo, HEVC hardware a bitrate basso (~110 MB/ora)
-#   - un file per ora, cosi' un crash perde al massimo un'ora
-#   - a ogni avvio cancella i video piu' vecchi di 14 giorni: il disco si
-#     stabilizza sul buffer, non cresce all'infinito
-#   - nel vault Obsidian entra SOLO il testo: i video restano fuori da iCloud
+# How it stays small:
+#   - screen at 1 frame per second, hardware HEVC at a low bitrate (~110 MB/hour)
+#   - one file per hour, so a crash loses at most an hour
+#   - every start deletes videos older than 14 days: the disk settles on a buffer
+#   - the Obsidian vault gets TEXT only: videos stay out of iCloud
 #
-# ATTENZIONE: registra il microfono in continuo. Se sei in call, stai
-# registrando anche gli altri: dillo o ferma con `registra stop`.
+# WARNING: the microphone runs the whole time. In a call you are recording
+# other people too. Say so, or stop with `registra stop`.
 
 set -euo pipefail
 
-CARTELLA="$HOME/Registrazioni"
-PIDFILE="$CARTELLA/.registra.pid"
-SESSIONE="$CARTELLA/.sessione"          # marcatore: inizio della sessione corrente
-MODELLO="$CARTELLA/.whisper/ggml-large-v3-turbo-q5_0.bin"
-VAULT="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/KB-Ludovico-C98"
-NOTE="$VAULT/Registrazioni"
-GIORNI=14
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=registra-lib.sh
+. "$HERE/registra-lib.sh"
 
-mkdir -p "$CARTELLA"
+DIR="${REGISTRA_DIR:-$HOME/Registrazioni}"
+PIDFILE="$DIR/.registra.pid"
+SESSION="$DIR/.sessione"          # marker: start of the current session
+MODEL="$DIR/.whisper/ggml-large-v3-turbo-q5_0.bin"
+VAULT="${REGISTRA_VAULT:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/KB-Ludovico-C98}"
+NOTES="$VAULT/Registrazioni"
+DOT="${REGISTRA_DOT:-$HOME/bin/registra-dot}"
+AUDIO_HELPER="${REGISTRA_AUDIO:-$HOME/bin/registra-audio}"
+SCREEN="${REGISTRA_SCREEN:-0}"    # ffmpeg "Capture screen N"; red dot follows this
+DAYS=14
+MIN_SECS=20      # a toggle this young cannot stop: it is a double tap
+FRAME_MIN=8      # frames read per video, even on very short clips
+FRAME_MAX=30     # cap: more frames cost and add nothing
+LOCK_STALE=120   # a .lock older than this is leftover, not a live start
+DOTPID="$DIR/.dot.pid"
 
-in_corso() {
-  # non basta il pidfile: se si preme Option+R due volte di fila il secondo avvio
-  # parte prima che il primo abbia scritto il pid, e due ffmpeg si pestano i piedi
-  # scrivendo lo stesso file. Il processo e' la verita', il pidfile un dettaglio.
+mkdir -p "$DIR"
+
+running() {
+  # the pidfile is not enough: two Option+R in a row can start a second ffmpeg
+  # before the first has written the pid. The process is the truth.
   { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; } \
-    || pgrep -f "avfoundation.*$CARTELLA" >/dev/null 2>&1
+    || pgrep -f "avfoundation.*$DIR" >/dev/null 2>&1
 }
 
-# quando si parte da Option+R non c'e' un terminale: la conferma passa da qui
-avvisa() {
+# Option+R has no terminal: confirmation goes through here
+notify() {
   osascript -e "display notification \"$1\" with title \"registra\"" 2>/dev/null || true
 }
 
-case "${1:-avvia}" in
+screen_label() {
+  if [ -x "$DOT" ]; then
+    "$DOT" screens 2>/dev/null | awk -F'\t' -v n="$SCREEN" '$1==n { printf "%s (%s)", $3, $4; exit }'
+  fi
+}
+
+show_dot() {
+  hide_dot
+  [ -x "$DOT" ] || return 0
+  # nohup: Option+R's process exits immediately; without this the overlay dies on SIGHUP
+  nohup "$DOT" on --screen "$SCREEN" --pid-file "$DOTPID" --watch-pid-file "$PIDFILE" \
+    >/dev/null 2>&1 &
+  disown $! 2>/dev/null || true
+}
+
+hide_dot() {
+  if [ -f "$DOTPID" ]; then
+    kill "$(tr -d '[:space:]' < "$DOTPID")" 2>/dev/null || true
+    rm -f "$DOTPID"
+  fi
+  pkill -f "registra-dot on" 2>/dev/null || true
+}
+
+cmd="${1:-start}"
+case "$cmd" in
 
   toggle)
-    if in_corso; then
+    # A start in progress is never interrupted: whoever hits Option+R again
+    # after two seconds wants to start, not stop. Missing this used to kill
+    # the ffmpeg that had just been born, and that is how a meeting is lost.
+    if [ -d "$DIR/.lock" ]; then
+      lock_age=$(( $(date +%s) - $(stat -f %m "$DIR/.lock" 2>/dev/null || echo 0) ))
+      if [ "$lock_age" -lt "$LOCK_STALE" ]; then
+        notify "Already starting, wait."
+        exit 0
+      fi
+      rmdir "$DIR/.lock" 2>/dev/null || true
+    fi
+
+    if running; then
+      # Double-tap guard: a recording this young cannot be stopped by the
+      # hotkey. To stop for real inside the window: registra stop
+      age=$(( $(date +%s) - $(stat -f %m "$SESSION" 2>/dev/null || echo 0) ))
+      if [ "$age" -lt "$MIN_SECS" ]; then
+        notify "Already recording (${age}s). Ignored: to stop, run registra stop."
+        exit 0
+      fi
       "$0" stop
-      avvisa "Fermata. Trascrivo e archivio nel vault."
+      notify "Stopped. Transcribing and filing the note."
     else
-      if "$0" avvia; then
-        avvisa "Registrazione avviata: schermo + microfono."
+      # Feedback comes FIRST, before the slow work (audio devices, ffmpeg
+      # probe). Without it the user is in the dark for seconds and taps again.
+      notify "Starting recording..."
+      if "$0" start; then
+        label=$(screen_label)
+        if [ -n "$label" ]; then
+          notify "Recording $label. Red dot is on that screen."
+        else
+          notify "Recording screen $SCREEN + microphone. Look for the red dot."
+        fi
       else
-        avvisa "NON partita: controlla i permessi di Registrazione Schermo."
+        notify "Did not start. Log: $DIR/.registra.log"
       fi
     fi
     ;;
 
   stop)
-    if in_corso; then
-      # SIGINT, non SIGKILL: ffmpeg chiude il file mp4 in modo pulito
-      kill -INT "$(cat "$PIDFILE")"
-      sleep 2
-      rm -f "$PIDFILE"
-      # l'uscita torna quella di prima e i dispositivi virtuali si smontano
-      if [ -f "$CARTELLA/.uscita-prima" ]; then
-        switchaudiosource -s "$(cat "$CARTELLA/.uscita-prima")" -t output >/dev/null 2>&1 || true
-        rm -f "$CARTELLA/.uscita-prima"
+    if running; then
+      # SIGINT, not SIGKILL: ffmpeg closes the mp4 cleanly
+      pid_ff=$(cat "$PIDFILE" 2>/dev/null || true)
+      if [ -z "$pid_ff" ] || ! kill -0 "$pid_ff" 2>/dev/null; then
+        pid_ff=$(pgrep -f "avfoundation.*$DIR" | head -1)
       fi
-      "$HOME/bin/registra-audio" giu 2>/dev/null || true
-      echo "Registrazione fermata. I file sono in $CARTELLA"
-      # la trascrizione va per conto suo: su ore di audio ci mette minuti,
-      # e non ha senso tenere il terminale in ostaggio
-      nohup "$0" trascrivi >"$CARTELLA/.trascrivi.log" 2>&1 &
-      echo "Trascrivo in sottofondo: la nota comparira' nel vault, cartella Registrazioni."
-      echo "Per seguire: tail -f $CARTELLA/.trascrivi.log"
-    else
-      echo "Non stava registrando."
+      [ -n "$pid_ff" ] || { echo "Cannot find the recording process."; rm -f "$PIDFILE"; hide_dot; exit 1; }
+      kill -INT "$pid_ff"
+      # wait until ffmpeg actually writes the moov atom, not a guessed sleep:
+      # a long file can take more than 2 seconds and the video stays broken
+      for _ in $(seq 1 50); do
+        kill -0 "$pid_ff" 2>/dev/null || break
+        sleep 0.2
+      done
+      kill -0 "$pid_ff" 2>/dev/null && { sleep 2; kill -9 "$pid_ff" 2>/dev/null || true; }
       rm -f "$PIDFILE"
-    fi
-    ;;
-
-  stato)
-    if in_corso; then
-      echo "Sta registrando (pid $(cat "$PIDFILE"))."
+      hide_dot
+      if [ -f "$DIR/.uscita-prima" ]; then
+        switchaudiosource -s "$(cat "$DIR/.uscita-prima")" -t output >/dev/null 2>&1 || true
+        rm -f "$DIR/.uscita-prima"
+      fi
+      "$AUDIO_HELPER" down 2>/dev/null || "$AUDIO_HELPER" giu 2>/dev/null || true
+      echo "Recording stopped. Files are in $DIR"
+      nohup "$0" transcribe >"$DIR/.trascrivi.log" 2>&1 &
+      echo "Transcribing in the background: the note will appear in the vault, Registrazioni/"
+      echo "Follow with: tail -f $DIR/.trascrivi.log"
     else
-      echo "Ferma."
+      echo "Not recording."
+      rm -f "$PIDFILE"
+      hide_dot
     fi
-    echo "Spazio video: $(find "$CARTELLA" -maxdepth 1 -name '*.mp4' -exec du -ch {} + 2>/dev/null | tail -1 | cut -f1)  ($(find "$CARTELLA" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ') file)"
     ;;
 
-  trascrivi)
-    # trascrive i video della sessione appena chiusa e archivia la nota nel vault
-    [ -f "$MODELLO" ] || { echo "Manca il modello whisper in $MODELLO"; exit 1; }
-    [ -f "$SESSIONE" ] || { echo "Nessuna sessione da trascrivere."; exit 0; }
+  status|stato)
+    if running; then
+      echo "Recording (pid $(cat "$PIDFILE" 2>/dev/null || pgrep -f "avfoundation.*$DIR" | head -1))."
+      label=$(screen_label)
+      [ -n "$label" ] && echo "Screen $SCREEN: $label"
+    else
+      echo "Idle."
+    fi
+    echo "Video disk: $(find "$DIR" -maxdepth 1 -name '*.mp4' -exec du -ch {} + 2>/dev/null | tail -1 | cut -f1)  ($(find "$DIR" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ') files)"
+    ;;
 
-    FILES=$(find "$CARTELLA" -name '*.mp4' -newer "$SESSIONE" | sort)
-    [ -n "$FILES" ] || { echo "Nessun video nuovo."; exit 0; }
+  screens)
+    LIST=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
+    echo "Capture screens (REGISTRA_SCREEN picks one; the red dot appears on it)."
+    echo "Currently: SCREEN=$SCREEN"
+    echo
+    if [ -x "$DOT" ]; then
+      "$DOT" screens | while IFS=$'\t' read -r idx _id name size flags; do
+        ff=$(parse_capture_index "$LIST" "$idx")
+        mark=""
+        [ "$idx" = "$SCREEN" ] && mark="  <- recording this"
+        extra=""
+        [ -n "$flags" ] && extra="  $flags"
+        printf "  %s  %-28s  %-10s  ffmpeg [%s]%s%s\n" "$idx" "$name" "$size" "${ff:-?}" "$extra" "$mark"
+      done
+    else
+      echo "registra-dot is not installed; ffmpeg devices:"
+      echo "$LIST" | grep 'Capture screen'
+    fi
+    echo
+    echo "To record the other display: REGISTRA_SCREEN=1 registra toggle"
+    echo "Or export REGISTRA_SCREEN in ~/.zshrc."
+    ;;
 
-    TESTO=""
+  transcribe|trascrivi)
+    [ -f "$MODEL" ] || { echo "Whisper model missing at $MODEL"; exit 1; }
+    [ -f "$SESSION" ] || { echo "No session to transcribe."; exit 0; }
+
+    FILES=$(find "$DIR" -name '*.mp4' -newer "$SESSION" | sort)
+    [ -n "$FILES" ] || { echo "No new video."; exit 0; }
+
+    TEXT=""
+    VISUAL=""
     for f in $FILES; do
       wav=$(mktemp -t registra).wav
       ffmpeg -y -hide_banner -loglevel error -i "$f" -ar 16000 -ac 1 "$wav"
-      # -l auto: nei meeting si mescolano italiano, inglese e romeno.
-      # I timestamp restano: sono la correlazione col video, per saltare al minuto giusto.
-      pezzo=$(whisper-cli -m "$MODELLO" -f "$wav" -l auto -np 2>/dev/null)
+      # -l auto: meetings mix Italian, English and Romanian.
+      # timestamps stay: they are the correlation with the video.
+      chunk=$(whisper-cli -m "$MODEL" -f "$wav" -l auto -np 2>/dev/null)
       rm -f "$wav"
-      TESTO="$TESTO
+      TEXT="$TEXT
 ## $(basename "$f" .mp4 | tr '_' ' ')
-$pezzo
+$chunk
 "
+
+      # the screen is half the information: in a meeting that shares a
+      # dashboard, audio alone does not say what was on screen.
+      # frames are spread over the whole duration, not on scene cuts: in a
+      # call the webcams change constantly and would bias the first seconds.
+      duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" 2>/dev/null || echo 0)
+      n_frame=$(awk -v d="$duration" -v lo="$FRAME_MIN" -v hi="$FRAME_MAX" \
+        'BEGIN{ if(d<=0){print lo; exit} n=int(d/25+0.5); if(n<lo)n=lo; if(n>hi)n=hi; print n }')
+      fps=$(awk -v d="$duration" -v n="$n_frame" 'BEGIN{ if(d<=0)d=1; printf "%.6f", n/d }')
+      frames=$(mktemp -d -t registra-frame)
+      ffmpeg -y -hide_banner -loglevel error -i "$f" \
+        -vf "fps=$fps,scale=1400:-1" -q:v 4 "$frames/k%03d.jpg" 2>/dev/null || true
+
+      listing=$(find "$frames" -name 'k*.jpg' | sort)
+      if [ -n "$listing" ]; then
+        map=$(echo "$listing" | awk -v n="$n_frame" -v d="$duration" \
+          '{ t=int((NR-1)*d/n); printf "%s  (at %d:%02d from start)\n", $0, int(t/60), t%60 }')
+        descr=$(claude -p "Sei gli occhi di chi non ha visto questo meeting e deve ricordarsene.
+Leggi con Read, uno per uno e in ordine, questi fotogrammi dello schermo:
+
+$map
+
+Scrivi in italiano cosa mostrava lo schermo. Regole tassative:
+- Trascrivi LETTERALMENTE il testo leggibile: titolo della finestra o della call, URL, nomi di repository e progetti, intestazioni e valori delle tabelle, nomi dei partecipanti visibili.
+- Se un testo e' sfocato scrivi che e' illeggibile. Non inventare MAI un numero, un nome o un URL.
+- Se lo schermo resta sostanzialmente fermo, dillo in una riga sola ed elenca solo gli istanti in cui cambia qualcosa.
+- Ancora ogni osservazione all'istante del fotogramma.
+- Niente trattini lunghi. Massimo 15 righe." --model sonnet --allowedTools Read 2>/dev/null || true)
+        if echo "$descr" | grep -qiE "not logged in|please run /login|invalid api key|credit balance|usage limit"; then
+          echo "Screen read skipped: claude did not answer ($(echo "$descr" | head -1))" >&2
+          descr=""
+        fi
+        [ "${#descr}" -lt 60 ] && descr=""
+        [ -n "$descr" ] && VISUAL="$VISUAL
+### $(basename "$f" .mp4 | tr '_' ' ')
+$descr
+"
+      fi
+      rm -rf "$frames"
     done
 
-    DATA=$(date '+%Y-%m-%d %H%M')
-    GIORNO=$(date '+%Y-%m-%d')
+    STAMP=$(date '+%Y-%m-%d %H%M')
+    DAY=$(date '+%Y-%m-%d')
 
-    # l'archiviazione "intelligente" la fa claude in headless: titolo, tag e
-    # riassunto dal contenuto. Se non risponde, la nota esce comunque, grezza.
-    META=$(echo "$TESTO" | head -c 30000 | claude -p --model haiku \
-      "Questa e' la trascrizione di una sessione di lavoro/meeting registrata al computer. Rispondi in ESATTAMENTE tre righe, senza altro testo:
+    # title, tags, summary from content. If claude does not answer, the note
+    # is still written, raw. The vault is Italian; keep the note in Italian.
+    META=$(printf '%s\n\n=== COSA C.ERA A SCHERMO ===\n%s\n' "$TEXT" "$VISUAL" \
+      | head -c 30000 | claude -p --model haiku \
+      "Questi sono la trascrizione audio e la descrizione dello schermo di una sessione di lavoro/meeting registrata al computer. Rispondi in ESATTAMENTE tre righe, senza altro testo:
 TITOLO: <max 6 parole, in italiano, specifico sul contenuto>
 TAG: <2-4 tag brevi in kebab-case separati da spazio, es: meeting berto consulenza>
 RIASSUNTO: <2-3 frasi sul contenuto e le decisioni prese>" 2>/dev/null || true)
 
-    TITOLO=$(echo "$META" | sed -n 's/^TITOLO: *//p' | head -1)
+    TITLE=$(echo "$META" | sed -n 's/^TITOLO: *//p' | head -1)
     TAGS=$(echo "$META"   | sed -n 's/^TAG: *//p'    | head -1)
-    RIASSUNTO=$(echo "$META" | sed -n 's/^RIASSUNTO: *//p' | head -1)
-    [ -n "$TITOLO" ] || TITOLO="Sessione registrata"
+    SUMMARY=$(echo "$META" | sed -n 's/^RIASSUNTO: *//p' | head -1)
+    [ -n "$TITLE" ] || TITLE="Sessione registrata"
     [ -n "$TAGS" ]   || TAGS="registrazione"
 
-    mkdir -p "$NOTE"
-    NOTA="$NOTE/$DATA $(echo "$TITOLO" | tr -d '/:').md"
+    mkdir -p "$NOTES"
+    NOTE="$NOTES/$STAMP $(echo "$TITLE" | tr -d '/:').md"
     {
       echo "---"
       echo "tags: [$(echo "$TAGS" | tr ' ' ',')]"
-      echo "data: $GIORNO"
+      echo "data: $DAY"
       echo "tipo: registrazione"
       echo "---"
       echo
-      echo "# $TITOLO"
+      echo "# $TITLE"
       echo
-      [ -n "$RIASSUNTO" ] && { echo "$RIASSUNTO"; echo; }
-      echo "**Video** (sul Mac, si cancellano dopo $GIORNI giorni):"
+      [ -n "$SUMMARY" ] && { echo "$SUMMARY"; echo; }
+      echo "**Video** (on the Mac, deleted after $DAYS days):"
       for f in $FILES; do echo "- \`$f\`"; done
       echo
-      echo "*I tempi nella trascrizione sono relativi al video dell'ora corrispondente:*"
-      echo "*ogni sezione qui sotto porta il nome del suo file.*"
+      echo "*Timestamps in the transcript are relative to the matching hour's video:*"
+      echo "*each section below is named after its file.*"
+      if [ -n "$VISUAL" ]; then
+        echo
+        echo "## Cosa c'era a schermo"
+        echo "$VISUAL"
+      fi
       echo
-      echo "$TESTO"
-    } > "$NOTA"
+      echo "## Trascrizione"
+      echo "$TEXT"
+    } > "$NOTE"
 
-    rm -f "$SESSIONE"
-    echo "Nota creata: $NOTA"
+    rm -f "$SESSION"
+    echo "Note created: $NOTE"
     ;;
 
-  avvia)
-    # lock atomico: due Option+R ravvicinati non devono far partire due ffmpeg
-    if ! mkdir "$CARTELLA/.lock" 2>/dev/null; then
-      echo "Un avvio e' gia' in corso."
+  start|avvia)
+    if ! mkdir "$DIR/.lock" 2>/dev/null; then
+      echo "A start is already in progress."
       exit 0
     fi
-    trap 'rmdir "$CARTELLA/.lock" 2>/dev/null' EXIT
+    trap 'rmdir "$DIR/.lock" 2>/dev/null' EXIT
 
-    if in_corso; then
-      echo "Sta gia' registrando."
+    if running; then
+      echo "Already recording."
       exit 0
     fi
 
-    # pulizia del buffer: via i video oltre i $GIORNI giorni
-    trovati=$(find "$CARTELLA" -name '*.mp4' -mtime +"$GIORNI" | wc -l | tr -d ' ')
-    if [ "$trovati" -gt 0 ]; then
-      find "$CARTELLA" -name '*.mp4' -mtime +"$GIORNI" -delete
-      echo "Pulizia: cancellati $trovati video piu' vecchi di $GIORNI giorni."
+    found=$(find "$DIR" -name '*.mp4' -mtime +"$DAYS" | wc -l | tr -d ' ')
+    if [ "$found" -gt 0 ]; then
+      find "$DIR" -name '*.mp4' -mtime +"$DAYS" -delete
+      echo "Cleanup: deleted $found videos older than $DAYS days."
     fi
 
-    # audio completo: se BlackHole c'e', si creano al volo "Registra-In" (microfono +
-    # audio di sistema) e "Registra-Out" (uscita attuale + BlackHole), cosi' in call
-    # entrano anche le voci degli altri, con AirPods o senza. L'uscita attuale viene
-    # letta adesso, non configurata prima: AirPods in ufficio, casse a casa.
-    # Senza BlackHole si degrada al solo microfono, come sempre.
-    INGRESSO="MacBook Pro Microphone"
-    FILTRO=(-ac 1)
-    if PRIMA=$("$HOME/bin/registra-audio" su 2>/dev/null) && [ -n "$PRIMA" ]; then
-      echo "$PRIMA" > "$CARTELLA/.uscita-prima"
+    # full audio: if BlackHole is present, create "Registra-In" (mic + BlackHole)
+    # and "Registra-Out" (current output + BlackHole) on the fly, so a call
+    # captures the other voices too, AirPods or not. Current output is read
+    # now, not configured in advance: AirPods at the office, speakers at home.
+    # Without BlackHole it degrades to microphone only.
+    INGRESS="MacBook Pro Microphone"
+    FILTER=(-ac 1)
+    if PREV=$("$AUDIO_HELPER" up 2>/dev/null || "$AUDIO_HELPER" su 2>/dev/null) && [ -n "$PREV" ]; then
+      echo "$PREV" > "$DIR/.uscita-prima"
       switchaudiosource -s "Registra-Out" -t output >/dev/null 2>&1 || true
-      INGRESSO="Registra-In"
-      # canali dell'aggregato: 0 = microfono, 1-2 = audio di sistema via BlackHole
-      FILTRO=(-filter:a "pan=mono|c0=c0+0.5*c1+0.5*c2")
-      echo "Audio completo: microfono + audio di sistema (uscita di prima: $PRIMA)"
+      INGRESS="Registra-In"
+      # aggregate channels: 0 = mic, 1-2 = system audio via BlackHole
+      FILTER=(-filter:a "pan=mono|c0=c0+0.5*c1+0.5*c2")
+      echo "Full audio: microphone + system audio (previous output: $PREV)"
     fi
 
-    # gli indici dei dispositivi cambiano (iPhone collegato, OBS...):
-    # si risolvono per nome a ogni avvio, DOPO aver creato Registra-In
-    LISTA=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
-    VIDEO=$(echo "$LISTA" | sed -n 's/.*\[\([0-9]*\)\] Capture screen 0/\1/p' | head -1)
-    AUDIO=$(echo "$LISTA" | sed -n "s/.*\[\([0-9]*\)\] $INGRESSO/\1/p" | tail -1)
+    # device indices change (iPhone plugged in, OBS...): resolve by name
+    # on every start, AFTER creating Registra-In
+    LIST=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
+    VIDEO=$(parse_capture_index "$LIST" "$SCREEN")
+    AUDIO=$(parse_audio_index "$LIST" "$INGRESS")
     if [ -z "$VIDEO" ] || [ -z "$AUDIO" ]; then
-      echo "Non trovo schermo o microfono. Dispositivi visti:"
-      echo "$LISTA" | grep '^\[AVFoundation'
+      echo "Cannot find screen $SCREEN or microphone. Devices seen:"
+      echo "$LIST" | grep '^\[AVFoundation'
+      hide_dot
       exit 1
     fi
 
     open -a Handy
-    touch "$SESSIONE"
+    touch "$SESSION"
+    # a leftover pidfile from a crash would make the overlay think ffmpeg is
+    # already dead and exit. ffmpeg has not started yet, so this file is stale.
+    rm -f "$PIDFILE"
+    show_dot
 
-    # cattura a 5 fps (1 fps il driver non lo accetta), tiene 1 fps in uscita.
-    # HEVC hardware: CPU quasi a zero. Un file per ora, nome = data e ora.
-    nohup ffmpeg -hide_banner -loglevel error \
+    # capture at 5 fps (the driver rejects 1 fps), keep 1 fps on the way out.
+    # hardware HEVC: CPU near zero. One file per hour, name = date and time.
+    nohup ffmpeg -hide_banner -loglevel error -nostdin \
       -f avfoundation -framerate 5 -capture_cursor 1 -i "${VIDEO}:${AUDIO}" \
       -r 1 -c:v hevc_videotoolbox -b:v 200k -tag:v hvc1 \
-      -c:a aac "${FILTRO[@]}" -b:a 48k \
+      -c:a aac "${FILTER[@]}" -b:a 48k \
       -f segment -segment_time 3600 -reset_timestamps 1 -strftime 1 \
-      "$CARTELLA/%Y-%m-%d_%H-%M.mp4" \
-      >"$CARTELLA/.registra.log" 2>&1 &
+      "$DIR/%Y-%m-%d_%H-%M.mp4" \
+      >"$DIR/.registra.log" 2>&1 &
 
     echo $! > "$PIDFILE"
-    sleep 3
-    if in_corso; then
-      echo "Registro: schermo 1 fps + microfono, un file l'ora in $CARTELLA"
-      echo "Handy e' su. Per fermare (e trascrivere nel vault): registra stop"
+
+    # confirm when the first segment exists, not after a fixed sleep:
+    # this shortens the blind window where the user does not know if it is on
+    for _ in $(seq 1 40); do
+      running || break
+      [ -n "$(find "$DIR" -maxdepth 1 -name '*.mp4' -newer "$SESSION" -print -quit 2>/dev/null)" ] && break
+      sleep 0.25
+    done
+
+    if running; then
+      label=$(screen_label)
+      echo "Recording: ${label:-screen $SCREEN} at 1 fps + microphone, one file per hour in $DIR"
+      echo "Red dot is on that display. Handy is open. To stop (and transcribe): registra stop"
     else
-      echo "ffmpeg non e' partito. Ultime righe del log:"
-      tail -5 "$CARTELLA/.registra.log"
-      echo
-      echo "Se parla di permessi: Impostazioni di Sistema > Privacy e Sicurezza >"
-      echo "Registrazione Schermo, e abilita il tuo Terminale. Poi riprova."
+      hide_dot
+      echo "ffmpeg did not start. Last lines of the log:"
+      tail -5 "$DIR/.registra.log"
+      if grep -qiE "not permitted|permission|denied|TCC" "$DIR/.registra.log" 2>/dev/null; then
+        echo
+        echo "Looks like a permission issue: System Settings > Privacy and"
+        echo "Security > Screen Recording, enable skhd and Terminal."
+      fi
       rm -f "$PIDFILE"
       exit 1
     fi
     ;;
 
   *)
-    echo "Uso: registra [stop|stato]"
+    echo "Usage: registra [start|stop|status|toggle|screens|transcribe]"
     exit 1
     ;;
 esac

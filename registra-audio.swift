@@ -1,17 +1,17 @@
-// registra-audio — crea e distrugge i dispositivi audio per la registrazione completa.
+// registra-audio — create and tear down the aggregate devices for full-call audio.
 //
-//   registra-audio su    crea "Registra-In" (microfono + BlackHole) e "Registra-Out"
-//                        (uscita attuale + BlackHole). L'uscita attuale viene letta al
-//                        momento: AirPods in ufficio, casse a casa, senza configurare niente.
-//   registra-audio giu   distrugge i due dispositivi e si torna come prima.
+//   registra-audio up    create "Registra-In" (mic + BlackHole) and "Registra-Out"
+//                        (current output + BlackHole). Current output is read now:
+//                        AirPods at the office, speakers at home, nothing to configure.
+//   registra-audio down  destroy both devices and return to the previous output.
 //
-// Perche' esiste: ffmpeg puo' leggere solo dispositivi di ingresso, e l'audio degli
-// altri in call (che esce nelle cuffie) non passa mai per il microfono. BlackHole e'
-// un cavo virtuale: "Registra-Out" duplica l'uscita verso le cuffie E verso il cavo,
-// "Registra-In" mette insieme microfono e cavo. Risultato: entrambe le voci in un
-// solo dispositivo, che ffmpeg registra.
+// Why it exists: ffmpeg can only read input devices, and the other people on a
+// call (coming out of the headphones) never pass through the microphone.
+// BlackHole is a virtual cable: "Registra-Out" duplicates output to the
+// headphones AND to the cable, "Registra-In" mixes mic and cable. Result:
+// both voices in one device, which ffmpeg records.
 //
-// Compilazione (la fa installa.sh):
+// Compile (install.sh does this):
 //   swiftc -O -o ~/bin/registra-audio registra-audio.swift -framework CoreAudio
 
 import CoreAudio
@@ -60,8 +60,8 @@ func findByUID(_ uid: String) -> AudioDeviceID? {
     allDevices().first { stringProp($0, kAudioDevicePropertyDeviceUID) == uid }
 }
 
-func findByName(_ frammento: String) -> AudioDeviceID? {
-    allDevices().first { (stringProp($0, kAudioObjectPropertyName) ?? "").contains(frammento) }
+func findByName(_ fragment: String) -> AudioDeviceID? {
+    allDevices().first { (stringProp($0, kAudioObjectPropertyName) ?? "").contains(fragment) }
 }
 
 func distruggi() {
@@ -90,42 +90,42 @@ func crea(nome: String, uid: String, sotto: [String], master: String, impilato: 
     return AudioHardwareCreateAggregateDevice(desc as CFDictionary, &id) == noErr
 }
 
-let comando = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
+let command = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
 
-switch comando {
-case "su":
-    distruggi()  // residui di un avvio precedente non devono accumularsi
+switch command {
+case "up", "su":
+    distruggi()  // leftovers from a previous start must not accumulate
 
     guard let bh = findByName("BlackHole 2ch"),
           let bhUID = stringProp(bh, kAudioDevicePropertyDeviceUID) else {
-        FileHandle.standardError.write("BlackHole non installato: brew install blackhole-2ch\n".data(using: .utf8)!)
+        FileHandle.standardError.write("BlackHole not installed: brew install blackhole-2ch\n".data(using: .utf8)!)
         exit(2)
     }
     let mic = findByUID("BuiltInMicrophoneDevice") ?? findByName("MacBook Pro Microphone")
     guard let micID = mic, let micUID = stringProp(micID, kAudioDevicePropertyDeviceUID) else {
-        FileHandle.standardError.write("Microfono interno non trovato\n".data(using: .utf8)!)
+        FileHandle.standardError.write("Built-in microphone not found\n".data(using: .utf8)!)
         exit(1)
     }
     guard let out = defaultOutput(),
           let outUID = stringProp(out, kAudioDevicePropertyDeviceUID),
           outUID != UID_OUT else {
-        FileHandle.standardError.write("Uscita di sistema non leggibile\n".data(using: .utf8)!)
+        FileHandle.standardError.write("System output is not readable\n".data(using: .utf8)!)
         exit(1)
     }
 
     guard crea(nome: "Registra-In", uid: UID_IN, sotto: [micUID, bhUID], master: micUID, impilato: false),
           crea(nome: "Registra-Out", uid: UID_OUT, sotto: [outUID, bhUID], master: outUID, impilato: true) else {
-        FileHandle.standardError.write("Creazione dispositivi fallita\n".data(using: .utf8)!)
+        FileHandle.standardError.write("Failed to create aggregate devices\n".data(using: .utf8)!)
         distruggi()
         exit(1)
     }
-    // il nome dell'uscita di prima: lo stampa perche' lo script lo salvi e lo ripristini
+    // name of the previous output: printed so the script can save and restore it
     print(stringProp(out, kAudioObjectPropertyName) ?? "")
 
-case "giu":
+case "down", "giu":
     distruggi()
 
 default:
-    print("Uso: registra-audio su|giu")
+    print("Usage: registra-audio up|down")
     exit(1)
 }
