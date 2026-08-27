@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pure helpers for registra. Sourced by the script and by tests.
+# Pure helpers for record. Sourced by the script and by tests.
 # Do not mkdir, do not start processes.
 
 parse_capture_index() {

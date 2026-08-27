@@ -3,4 +3,4 @@
 # Option+R: toggle continuous recording (screen + microphone).
 # Handy dictation stays on Option+A, configured inside Handy itself.
 
-alt - r : $HOME/bin/registra toggle
+alt - r : $HOME/bin/record toggle

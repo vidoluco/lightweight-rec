@@ -4,8 +4,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# shellcheck source=../registra-lib.sh
-. "$ROOT/registra-lib.sh"
+# shellcheck source=../record-lib.sh
+. "$ROOT/record-lib.sh"
 
 LIST=$(cat "$ROOT/test/fixtures/avfoundation.txt")
 
@@ -22,7 +22,7 @@ check "$(parse_capture_index "$LIST" 0)" "5" "Capture screen 0 is ffmpeg video d
 check "$(parse_capture_index "$LIST" 1)" "6" "Capture screen 1 is ffmpeg video device 6"
 check "$(parse_capture_index "$LIST" 2)" ""  "missing Capture screen 2 is empty, not a camera"
 check "$(parse_audio_index "$LIST" "MacBook Pro Microphone")" "1" "built-in mic is audio device 1"
-check "$(parse_audio_index "$LIST" "Registra-In")" "" "missing aggregate is empty, not BlackHole"
+check "$(parse_audio_index "$LIST" "Record-In")" "" "missing aggregate is empty, not BlackHole"
 
 if [ "$fail" -ne 0 ]; then
   echo "parse_devices: failed"

@@ -1,12 +1,12 @@
 #!/bin/bash
 # Break this would catch: on/off leaving a stuck overlay, or the pid file
-# never being written so registra cannot hide the dot on stop.
+# never being written so record cannot hide the dot on stop.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="/tmp/registra-dot-onoff-$$"
-PIDFILE="/tmp/registra-dot-pid-$$"
-swiftc -O -o "$BIN" "$ROOT/registra-dot.swift" -framework AppKit
+BIN="/tmp/record-dot-onoff-$$"
+PIDFILE="/tmp/record-dot-pid-$$"
+swiftc -O -o "$BIN" "$ROOT/record-dot.swift" -framework AppKit
 trap 'kill "$dotpid" 2>/dev/null || true; rm -f "$BIN" "$PIDFILE"' EXIT
 
 "$BIN" on --screen 0 --pid-file "$PIDFILE" &

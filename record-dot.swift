@@ -1,16 +1,16 @@
-// registra-dot — red recording dot on the display ffmpeg is capturing.
+// record-dot — red recording dot on the display ffmpeg is capturing.
 //
-//   registra-dot screens
+//   record-dot screens
 //       tab-separated: index, display id, name, WxH, flags (main)
 //       index matches ffmpeg "Capture screen N" and CGGetActiveDisplayList.
 //
-//   registra-dot on [--screen N] [--pid-file PATH] [--watch-pid-file PATH]
+//   record-dot on [--screen N] [--pid-file PATH] [--watch-pid-file PATH]
 //       borderless always-on-top red dot, top-right of that display.
 //       Does not steal focus or mouse. Stays until SIGTERM, or until the
 //       ffmpeg pid in --watch-pid-file dies.
 //
 // Compile (install.sh does this):
-//   swiftc -O -o ~/bin/registra-dot registra-dot.swift -framework AppKit
+//   swiftc -O -o ~/bin/record-dot record-dot.swift -framework AppKit
 
 import AppKit
 import CoreGraphics
@@ -104,11 +104,11 @@ class DotView: NSView {
 func showDot(screenIndex: Int, pidFile: String?, watchPidFile: String?) {
     let displays = activeDisplays()
     guard let display = displays.first(where: { $0.index == screenIndex }) else {
-        fputs("registra-dot: no display at index \(screenIndex)\n", stderr)
+        fputs("record-dot: no display at index \(screenIndex)\n", stderr)
         exit(1)
     }
     guard let ns = display.screen else {
-        fputs("registra-dot: display \(screenIndex) has no NSScreen\n", stderr)
+        fputs("record-dot: display \(screenIndex) has no NSScreen\n", stderr)
         exit(1)
     }
 
@@ -186,6 +186,6 @@ case "on":
         watchPidFile: parseFlag(args, "--watch-pid-file")
     )
 default:
-    fputs("Usage: registra-dot screens | on [--screen N] [--pid-file PATH] [--watch-pid-file PATH]\n", stderr)
+    fputs("Usage: record-dot screens | on [--screen N] [--pid-file PATH] [--watch-pid-file PATH]\n", stderr)
     exit(1)
 }

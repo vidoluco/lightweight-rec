@@ -5,8 +5,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="/tmp/registra-dot-test-$$"
-swiftc -O -o "$BIN" "$ROOT/registra-dot.swift" -framework AppKit
+BIN="/tmp/record-dot-test-$$"
+swiftc -O -o "$BIN" "$ROOT/record-dot.swift" -framework AppKit
 trap 'rm -f "$BIN"' EXIT
 
 out=$("$BIN" screens)
