@@ -9,9 +9,9 @@ The command on the machine is still `registra`.
 ## How it works
 
 ```
-Option+R ──► red dot on Capture screen N (default 0 = built-in)
+Option+R ──► red dot on Capture screen N (default 0)
              ffmpeg: 1 fps screen + microphone, hardware HEVC
-                 │        one file per hour in ~/Registrazioni  (~110 MB/hour)
+                 │        one file per hour in ~/Recordings  (~110 MB/hour)
                  │        videos older than 14 days delete themselves
 Option+R ──► stop │
                  ▼
@@ -20,38 +20,38 @@ Option+R ──► stop │
              claude -p (haiku) picks title, tags and summary
              claude -p (sonnet) reads evenly spaced frames of the screen
                  ▼
-             note in the Obsidian vault, folder Registrazioni/
+             note in the Obsidian vault, folder Recordings/
              (text only: videos stay out of iCloud)
 ```
 
 Timestamps in the transcript are relative to that hour's video file: from
 the note you open the video and jump to the right minute.
 
-## This machine (defaults)
+## Defaults
 
-These are the values `install.sh` writes and that Option+R uses today.
+| What | Default | Override |
+|---|---|---|
+| Hotkey | Option+R (`skhd` → `~/bin/registra toggle`) | `~/.config/skhd/skhdrc` |
+| Dictation | Option+A, configured inside [Handy](https://github.com/cjpais/handy) | Handy settings |
+| Videos | `~/Recordings` | `REGISTRA_DIR` |
+| Notes | `~/Documents/Obsidian/Recordings` | `REGISTRA_VAULT` and `REGISTRA_NOTES` |
+| Whisper model | `$REGISTRA_DIR/.whisper/ggml-large-v3-turbo-q5_0.bin` | follows `REGISTRA_DIR` |
+| Display | `Capture screen 0` | `REGISTRA_SCREEN` |
+| Recording indicator | red pulsing dot, top-right of the captured display | |
+| Full-call audio | BlackHole 2ch + aggregates `Registra-In` / `Registra-Out` | |
 
-| What | Value |
-|---|---|
-| Hotkey | Option+R (`skhd` → `~/bin/registra toggle`) |
-| Dictation | Option+A, configured inside [Handy](https://github.com/cjpais/handy) v0.9.5, Whisper Large V3 |
-| Videos | `~/Registrazioni` (`REGISTRA_DIR`), HEVC 1 fps, ~110 MB/hour, 14-day buffer |
-| Notes | `KB-Ludovico-C98/Registrazioni` (`REGISTRA_VAULT`) |
-| Whisper model | `~/Registrazioni/.whisper/ggml-large-v3-turbo-q5_0.bin` |
-| Default display | `REGISTRA_SCREEN=0` → Built-in Retina Display |
-| Second display | `REGISTRA_SCREEN=1` → HP E233 (1920×1080, above the laptop) |
-| Recording indicator | red pulsing dot, top-right of the captured display |
-| Full-call audio | BlackHole 2ch + aggregates `Registra-In` / `Registra-Out` |
-
-Override any of it without editing the script:
+Machine-specific paths (a different vault, a second monitor) go in
+`~/.config/registra/config`. skhd does not load your shell rc, so that
+file is the override that Option+R actually sees. Copy `config.example`.
 
 ```bash
-export REGISTRA_SCREEN=1          # record the HP instead of the laptop
-export REGISTRA_DIR="$HOME/Movies/registra"
-export REGISTRA_VAULT="/path/to/vault"
+REGISTRA_DIR="$HOME/Recordings"
+REGISTRA_VAULT="$HOME/Documents/Obsidian"
+REGISTRA_NOTES="$HOME/Documents/Obsidian/Recordings"
+REGISTRA_SCREEN=0
 ```
 
-`registra screens` prints both displays, the ffmpeg device index, and which
+`registra screens` prints the displays, the ffmpeg device index, and which
 one currently has the red dot.
 
 ## Components, all free and open source
@@ -93,7 +93,7 @@ After each permission the service restarts itself; if it does not,
 | `registra status` | running? which screen? how much disk? |
 | `registra screens` | list displays and which one would be recorded |
 | `registra stop` | force stop even inside the 20s double-tap window |
-| `tail -f ~/Registrazioni/.trascrivi.log` | follow a transcription in progress |
+| `tail -f ~/Recordings/.transcribe.log` | follow a transcription in progress |
 
 Option+R ignores a second tap in the first 20 seconds (that tap meant
 "start", not "stop"). To abort a take that just started: `registra stop`.
@@ -101,10 +101,9 @@ Option+R ignores a second tap in the first 20 seconds (that tap meant
 ## Dual displays
 
 ffmpeg sees `Capture screen 0` and `Capture screen 1`. They match
-`CGGetActiveDisplayList` order. On this setup:
-
-- **0** built-in Retina (main, 1512×982 points)
-- **1** HP E233 (1920×1080, stacked above the laptop)
+`CGGetActiveDisplayList` order. Default is screen 0 (usually the built-in
+panel). Set `REGISTRA_SCREEN=1` in `~/.config/registra/config` to record
+the other one.
 
 The red dot is the ground truth: it is drawn on the display that ffmpeg
 is capturing, and it is excluded from the capture so it does not end up
@@ -130,8 +129,6 @@ multi-output device; volume is adjusted from the call app.
 ## Known and intended
 
 - **The microphone records other people too.** On a call, say so or stop.
-- Vault notes are written in Italian (the vault language). The tool itself
-  is English.
 - If you forget to stop and close the Mac: files already closed (one per
   hour) are safe; you lose at most the last hour. `registra stop` the next
   morning transcribes what is there.

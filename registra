@@ -22,12 +22,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=registra-lib.sh
 . "$HERE/registra-lib.sh"
 
-DIR="${REGISTRA_DIR:-$HOME/Registrazioni}"
+# Optional machine-local overrides. skhd does not load ~/.zshrc, so paths
+# that differ from the public defaults belong here, not in the environment.
+CONFIG="${REGISTRA_CONFIG:-$HOME/.config/registra/config}"
+if [ -f "$CONFIG" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG"
+fi
+
+DIR="${REGISTRA_DIR:-$HOME/Recordings}"
 PIDFILE="$DIR/.registra.pid"
-SESSION="$DIR/.sessione"          # marker: start of the current session
+SESSION="$DIR/.session"           # marker: start of the current session
 MODEL="$DIR/.whisper/ggml-large-v3-turbo-q5_0.bin"
-VAULT="${REGISTRA_VAULT:-$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/KB-Ludovico-C98}"
-NOTES="$VAULT/Registrazioni"
+VAULT="${REGISTRA_VAULT:-$HOME/Documents/Obsidian}"
+NOTES="${REGISTRA_NOTES:-$VAULT/Recordings}"
 DOT="${REGISTRA_DOT:-$HOME/bin/registra-dot}"
 AUDIO_HELPER="${REGISTRA_AUDIO:-$HOME/bin/registra-audio}"
 SCREEN="${REGISTRA_SCREEN:-0}"    # ffmpeg "Capture screen N"; red dot follows this
@@ -136,15 +144,15 @@ case "$cmd" in
       kill -0 "$pid_ff" 2>/dev/null && { sleep 2; kill -9 "$pid_ff" 2>/dev/null || true; }
       rm -f "$PIDFILE"
       hide_dot
-      if [ -f "$DIR/.uscita-prima" ]; then
-        switchaudiosource -s "$(cat "$DIR/.uscita-prima")" -t output >/dev/null 2>&1 || true
-        rm -f "$DIR/.uscita-prima"
+      if [ -f "$DIR/.previous-output" ]; then
+        switchaudiosource -s "$(cat "$DIR/.previous-output")" -t output >/dev/null 2>&1 || true
+        rm -f "$DIR/.previous-output"
       fi
       "$AUDIO_HELPER" down 2>/dev/null || "$AUDIO_HELPER" giu 2>/dev/null || true
       echo "Recording stopped. Files are in $DIR"
-      nohup "$0" transcribe >"$DIR/.trascrivi.log" 2>&1 &
-      echo "Transcribing in the background: the note will appear in the vault, Registrazioni/"
-      echo "Follow with: tail -f $DIR/.trascrivi.log"
+      nohup "$0" transcribe >"$DIR/.transcribe.log" 2>&1 &
+      echo "Transcribing in the background: the note will appear in the vault, Recordings/"
+      echo "Follow with: tail -f $DIR/.transcribe.log"
     else
       echo "Not recording."
       rm -f "$PIDFILE"
@@ -223,17 +231,17 @@ $chunk
       if [ -n "$listing" ]; then
         map=$(echo "$listing" | awk -v n="$n_frame" -v d="$duration" \
           '{ t=int((NR-1)*d/n); printf "%s  (at %d:%02d from start)\n", $0, int(t/60), t%60 }')
-        descr=$(claude -p "Sei gli occhi di chi non ha visto questo meeting e deve ricordarsene.
-Leggi con Read, uno per uno e in ordine, questi fotogrammi dello schermo:
+        descr=$(claude -p "You are the eyes of someone who missed this meeting and has to remember it.
+Read these screen frames with Read, one by one, in order:
 
 $map
 
-Scrivi in italiano cosa mostrava lo schermo. Regole tassative:
-- Trascrivi LETTERALMENTE il testo leggibile: titolo della finestra o della call, URL, nomi di repository e progetti, intestazioni e valori delle tabelle, nomi dei partecipanti visibili.
-- Se un testo e' sfocato scrivi che e' illeggibile. Non inventare MAI un numero, un nome o un URL.
-- Se lo schermo resta sostanzialmente fermo, dillo in una riga sola ed elenca solo gli istanti in cui cambia qualcosa.
-- Ancora ogni osservazione all'istante del fotogramma.
-- Niente trattini lunghi. Massimo 15 righe." --model sonnet --allowedTools Read 2>/dev/null || true)
+Write in English what the screen showed. Hard rules:
+- Copy readable text LITERALLY: window or call title, URL, repo and project names, table headers and values, visible participant names.
+- If text is blurry, say it is unreadable. NEVER invent a number, a name, or a URL.
+- If the screen barely changes, say so in one line and list only the instants where something changes.
+- Anchor every observation to the frame timestamp.
+- No long dashes. At most 15 lines." --model sonnet --allowedTools Read 2>/dev/null || true)
         if echo "$descr" | grep -qiE "not logged in|please run /login|invalid api key|credit balance|usage limit"; then
           echo "Screen read skipped: claude did not answer ($(echo "$descr" | head -1))" >&2
           descr=""
@@ -251,27 +259,27 @@ $descr
     DAY=$(date '+%Y-%m-%d')
 
     # title, tags, summary from content. If claude does not answer, the note
-    # is still written, raw. The vault is Italian; keep the note in Italian.
-    META=$(printf '%s\n\n=== COSA C.ERA A SCHERMO ===\n%s\n' "$TEXT" "$VISUAL" \
+    # is still written, raw.
+    META=$(printf '%s\n\n=== WHAT WAS ON SCREEN ===\n%s\n' "$TEXT" "$VISUAL" \
       | head -c 30000 | claude -p --model haiku \
-      "Questi sono la trascrizione audio e la descrizione dello schermo di una sessione di lavoro/meeting registrata al computer. Rispondi in ESATTAMENTE tre righe, senza altro testo:
-TITOLO: <max 6 parole, in italiano, specifico sul contenuto>
-TAG: <2-4 tag brevi in kebab-case separati da spazio, es: meeting berto consulenza>
-RIASSUNTO: <2-3 frasi sul contenuto e le decisioni prese>" 2>/dev/null || true)
+      "This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
+TITLE: <max 6 words, in English, specific to the content>
+TAGS: <2-4 short kebab-case tags separated by space, e.g. meeting standup planning>
+SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
 
-    TITLE=$(echo "$META" | sed -n 's/^TITOLO: *//p' | head -1)
-    TAGS=$(echo "$META"   | sed -n 's/^TAG: *//p'    | head -1)
-    SUMMARY=$(echo "$META" | sed -n 's/^RIASSUNTO: *//p' | head -1)
-    [ -n "$TITLE" ] || TITLE="Sessione registrata"
-    [ -n "$TAGS" ]   || TAGS="registrazione"
+    TITLE=$(echo "$META" | sed -n 's/^TITLE: *//p' | head -1)
+    TAGS=$(echo "$META"   | sed -n 's/^TAGS: *//p'    | head -1)
+    SUMMARY=$(echo "$META" | sed -n 's/^SUMMARY: *//p' | head -1)
+    [ -n "$TITLE" ] || TITLE="Recorded session"
+    [ -n "$TAGS" ]   || TAGS="recording"
 
     mkdir -p "$NOTES"
     NOTE="$NOTES/$STAMP $(echo "$TITLE" | tr -d '/:').md"
     {
       echo "---"
       echo "tags: [$(echo "$TAGS" | tr ' ' ',')]"
-      echo "data: $DAY"
-      echo "tipo: registrazione"
+      echo "date: $DAY"
+      echo "type: recording"
       echo "---"
       echo
       echo "# $TITLE"
@@ -284,11 +292,11 @@ RIASSUNTO: <2-3 frasi sul contenuto e le decisioni prese>" 2>/dev/null || true)
       echo "*each section below is named after its file.*"
       if [ -n "$VISUAL" ]; then
         echo
-        echo "## Cosa c'era a schermo"
+        echo "## What was on screen"
         echo "$VISUAL"
       fi
       echo
-      echo "## Trascrizione"
+      echo "## Transcript"
       echo "$TEXT"
     } > "$NOTE"
 
@@ -322,7 +330,7 @@ RIASSUNTO: <2-3 frasi sul contenuto e le decisioni prese>" 2>/dev/null || true)
     INGRESS="MacBook Pro Microphone"
     FILTER=(-ac 1)
     if PREV=$("$AUDIO_HELPER" up 2>/dev/null || "$AUDIO_HELPER" su 2>/dev/null) && [ -n "$PREV" ]; then
-      echo "$PREV" > "$DIR/.uscita-prima"
+      echo "$PREV" > "$DIR/.previous-output"
       switchaudiosource -s "Registra-Out" -t output >/dev/null 2>&1 || true
       INGRESS="Registra-In"
       # aggregate channels: 0 = mic, 1-2 = system audio via BlackHole

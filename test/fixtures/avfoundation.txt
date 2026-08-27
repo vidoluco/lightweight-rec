@@ -1,13 +1,13 @@
 [AVFoundation indev @ 0x9bf010140] AVFoundation video devices:
 [AVFoundation indev @ 0x9bf010140] [0] MacBook Pro Camera
 [AVFoundation indev @ 0x9bf010140] [1] OBS Virtual Camera
-[AVFoundation indev @ 0x9bf010140] [2] Ludovico’s iPhone Camera
+[AVFoundation indev @ 0x9bf010140] [2] iPhone Camera
 [AVFoundation indev @ 0x9bf010140] [3] MacBook Pro Desk View Camera
-[AVFoundation indev @ 0x9bf010140] [4] Ludovico’s iPhone Desk View Camera
+[AVFoundation indev @ 0x9bf010140] [4] iPhone Desk View Camera
 [AVFoundation indev @ 0x9bf010140] [5] Capture screen 0
 [AVFoundation indev @ 0x9bf010140] [6] Capture screen 1
 [AVFoundation indev @ 0x9bf010140] AVFoundation audio devices:
 [AVFoundation indev @ 0x9bf010140] [0] BlackHole 2ch
 [AVFoundation indev @ 0x9bf010140] [1] MacBook Pro Microphone
 [AVFoundation indev @ 0x9bf010140] [2] Microsoft Teams Audio
-[AVFoundation indev @ 0x9bf010140] [3] Ludovico’s iPhone Microphone
+[AVFoundation indev @ 0x9bf010140] [3] iPhone Microphone
