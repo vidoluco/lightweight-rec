@@ -17,8 +17,8 @@
 import CoreAudio
 import Foundation
 
-let UID_IN = "it.ludovico.registra.in"
-let UID_OUT = "it.ludovico.registra.out"
+let UID_IN = "app.lightweight-rec.in"
+let UID_OUT = "app.lightweight-rec.out"
 
 func stringProp(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
     var addr = AudioObjectPropertyAddress(

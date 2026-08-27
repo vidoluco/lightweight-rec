@@ -1,0 +1,7 @@
+# Copy to ~/.config/registra/config and uncomment what you need.
+# skhd does not load your shell rc; Option+R only sees this file.
+
+# REGISTRA_DIR="$HOME/Recordings"
+# REGISTRA_VAULT="$HOME/Documents/Obsidian"
+# REGISTRA_NOTES="$HOME/Documents/Obsidian/Recordings"
+# REGISTRA_SCREEN=0

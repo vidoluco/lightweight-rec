@@ -3,6 +3,12 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="${REGISTRA_CONFIG:-$HOME/.config/registra/config}"
+if [ -f "$CONFIG" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG"
+fi
+DIR="${REGISTRA_DIR:-$HOME/Recordings}"
 
 echo "== brew dependencies =="
 brew list ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
@@ -27,12 +33,21 @@ cp "$HERE/registra-lib.sh" "$HOME/bin/registra-lib.sh"
 chmod +x "$HOME/bin/registra" "$HOME/bin/registra-lib.sh"
 grep -q 'HOME/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.zshrc"
 
+echo "== local config =="
+mkdir -p "$HOME/.config/registra"
+if [ ! -f "$CONFIG" ]; then
+  cp "$HERE/config.example" "$CONFIG"
+  echo "Wrote $CONFIG (edit it to point at your vault)."
+else
+  echo "Keeping existing $CONFIG"
+fi
+
 echo "== Option+R hotkey (skhd) =="
 mkdir -p "$HOME/.config/skhd"
 cp "$HERE/skhdrc" "$HOME/.config/skhd/skhdrc"
 
 echo "== whisper model (large-v3-turbo, ~574 MB) =="
-MODEL="$HOME/Registrazioni/.whisper/ggml-large-v3-turbo-q5_0.bin"
+MODEL="$DIR/.whisper/ggml-large-v3-turbo-q5_0.bin"
 if [ ! -f "$MODEL" ]; then
   mkdir -p "$(dirname "$MODEL")"
   curl -L --fail -o "$MODEL.part" \
@@ -49,8 +64,6 @@ echo "  1. Accessibility      -> /opt/homebrew/bin/skhd"
 echo "  2. Screen Recording   -> skhd (macOS asks on the first Option+R)"
 echo "  3. Microphone         -> skhd"
 echo
-echo "Defaults on this machine:"
-echo "  videos  ~/Registrazioni  (deleted after 14 days)"
-echo "  notes   ~/Library/Mobile Documents/iCloud~md~obsidian/Documents/KB-Ludovico-C98/Registrazioni"
-echo "  screen  0 (built-in). List displays with: registra screens"
-echo "Override with REGISTRA_DIR, REGISTRA_VAULT, REGISTRA_SCREEN."
+echo "Defaults: videos in $DIR, notes in ${REGISTRA_NOTES:-${REGISTRA_VAULT:-$HOME/Documents/Obsidian}/Recordings}"
+echo "Edit $CONFIG to change paths or REGISTRA_SCREEN."
+echo "List displays with: registra screens"
