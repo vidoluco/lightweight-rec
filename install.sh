@@ -3,12 +3,12 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="${REGISTRA_CONFIG:-$HOME/.config/registra/config}"
+CONFIG="${RECORD_CONFIG:-$HOME/.config/record/config}"
 if [ -f "$CONFIG" ]; then
   # shellcheck disable=SC1090
   . "$CONFIG"
 fi
-DIR="${REGISTRA_DIR:-$HOME/Recordings}"
+DIR="${RECORD_DIR:-$HOME/Recordings}"
 
 echo "== brew dependencies =="
 brew list ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
@@ -20,21 +20,21 @@ brew list switchaudio-osx >/dev/null 2>&1 || brew install switchaudio-osx
 brew list --cask blackhole-2ch >/dev/null 2>&1 || brew install blackhole-2ch || \
   echo "WARN: BlackHole not installed; on a call only your voice will be recorded."
 
-echo "== CoreAudio helper (registra-audio) =="
+echo "== CoreAudio helper (record-audio) =="
 mkdir -p "$HOME/bin"
-swiftc -O -o "$HOME/bin/registra-audio" "$HERE/registra-audio.swift" -framework CoreAudio
+swiftc -O -o "$HOME/bin/record-audio" "$HERE/record-audio.swift" -framework CoreAudio
 
-echo "== recording-dot overlay (registra-dot) =="
-swiftc -O -o "$HOME/bin/registra-dot" "$HERE/registra-dot.swift" -framework AppKit
+echo "== recording-dot overlay (record-dot) =="
+swiftc -O -o "$HOME/bin/record-dot" "$HERE/record-dot.swift" -framework AppKit
 
 echo "== scripts in ~/bin =="
-cp "$HERE/registra" "$HOME/bin/registra"
-cp "$HERE/registra-lib.sh" "$HOME/bin/registra-lib.sh"
-chmod +x "$HOME/bin/registra" "$HOME/bin/registra-lib.sh"
+cp "$HERE/record" "$HOME/bin/record"
+cp "$HERE/record-lib.sh" "$HOME/bin/record-lib.sh"
+chmod +x "$HOME/bin/record" "$HOME/bin/record-lib.sh"
 grep -q 'HOME/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.zshrc"
 
 echo "== local config =="
-mkdir -p "$HOME/.config/registra"
+mkdir -p "$HOME/.config/record"
 if [ ! -f "$CONFIG" ]; then
   cp "$HERE/config.example" "$CONFIG"
   echo "Wrote $CONFIG (edit it to point at your vault)."
@@ -64,6 +64,6 @@ echo "  1. Accessibility      -> /opt/homebrew/bin/skhd"
 echo "  2. Screen Recording   -> skhd (macOS asks on the first Option+R)"
 echo "  3. Microphone         -> skhd"
 echo
-echo "Defaults: videos in $DIR, notes in ${REGISTRA_NOTES:-${REGISTRA_VAULT:-$HOME/Documents/Obsidian}/Recordings}"
-echo "Edit $CONFIG to change paths or REGISTRA_SCREEN."
-echo "List displays with: registra screens"
+echo "Defaults: videos in $DIR, notes in ${RECORD_NOTES:-${RECORD_VAULT:-$HOME/Documents/Obsidian}/Recordings}"
+echo "Edit $CONFIG to change paths or RECORD_SCREEN."
+echo "List displays with: record screens"

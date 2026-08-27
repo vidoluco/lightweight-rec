@@ -4,7 +4,7 @@
 key stops it, a red dot shows which display is in the take. On stop,
 transcription runs on its own and a note lands in the Obsidian vault.
 
-The command on the machine is still `registra`.
+The command is `record`.
 
 ## How it works
 
@@ -31,40 +31,40 @@ the note you open the video and jump to the right minute.
 
 | What | Default | Override |
 |---|---|---|
-| Hotkey | Option+R (`skhd` → `~/bin/registra toggle`) | `~/.config/skhd/skhdrc` |
+| Hotkey | Option+R (`skhd` → `~/bin/record toggle`) | `~/.config/skhd/skhdrc` |
 | Dictation | Option+A, configured inside [Handy](https://github.com/cjpais/handy) | Handy settings |
-| Videos | `~/Recordings` | `REGISTRA_DIR` |
-| Notes | `~/Documents/Obsidian/Recordings` | `REGISTRA_VAULT` and `REGISTRA_NOTES` |
-| Whisper model | `$REGISTRA_DIR/.whisper/ggml-large-v3-turbo-q5_0.bin` | follows `REGISTRA_DIR` |
-| Display | `Capture screen 0` | `REGISTRA_SCREEN` |
+| Videos | `~/Recordings` | `RECORD_DIR` |
+| Notes | `~/Documents/Obsidian/Recordings` | `RECORD_VAULT` and `RECORD_NOTES` |
+| Whisper model | `$RECORD_DIR/.whisper/ggml-large-v3-turbo-q5_0.bin` | follows `RECORD_DIR` |
+| Display | `Capture screen 0` | `RECORD_SCREEN` |
 | Recording indicator | red pulsing dot, top-right of the captured display | |
-| Full-call audio | BlackHole 2ch + aggregates `Registra-In` / `Registra-Out` | |
+| Full-call audio | BlackHole 2ch + aggregates `Record-In` / `Record-Out` | |
 
 Machine-specific paths (a different vault, a second monitor) go in
-`~/.config/registra/config`. skhd does not load your shell rc, so that
+`~/.config/record/config`. skhd does not load your shell rc, so that
 file is the override that Option+R actually sees. Copy `config.example`.
 
 ```bash
-REGISTRA_DIR="$HOME/Recordings"
-REGISTRA_VAULT="$HOME/Documents/Obsidian"
-REGISTRA_NOTES="$HOME/Documents/Obsidian/Recordings"
-REGISTRA_SCREEN=0
+RECORD_DIR="$HOME/Recordings"
+RECORD_VAULT="$HOME/Documents/Obsidian"
+RECORD_NOTES="$HOME/Documents/Obsidian/Recordings"
+RECORD_SCREEN=0
 ```
 
-`registra screens` prints the displays, the ffmpeg device index, and which
+`record screens` prints the displays, the ffmpeg device index, and which
 one currently has the red dot.
 
 ## Components, all free and open source
 
 | Piece | Role |
 |---|---|
-| `registra` (command in this repo) | orchestrates capture, overlay, transcript, note |
+| `record` (command in this repo) | orchestrates capture, overlay, transcript, note |
 | [ffmpeg](https://ffmpeg.org) | captures screen and microphone |
 | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | local transcription |
 | [skhd](https://github.com/koekeishiya/skhd) | binds Option+R to the script |
 | [Handy](https://github.com/cjpais/handy) | push-to-talk dictation, independent, launched alongside |
-| `registra-dot` | red recording dot on the captured display |
-| `registra-audio` | CoreAudio aggregates for mic + system audio |
+| `record-dot` | red recording dot on the captured display |
+| `record-audio` | CoreAudio aggregates for mic + system audio |
 | `claude` CLI | title, tags, summary, and screen-frame description (the only non-local piece) |
 
 ## Install on a new Mac
@@ -90,19 +90,19 @@ After each permission the service restarts itself; if it does not,
 |---|---|
 | `Option+R` | start or stop, with a notification |
 | `Option+A` (Handy) | dictation, hold to talk |
-| `registra status` | running? which screen? how much disk? |
-| `registra screens` | list displays and which one would be recorded |
-| `registra stop` | force stop even inside the 20s double-tap window |
+| `record status` | running? which screen? how much disk? |
+| `record screens` | list displays and which one would be recorded |
+| `record stop` | force stop even inside the 20s double-tap window |
 | `tail -f ~/Recordings/.transcribe.log` | follow a transcription in progress |
 
 Option+R ignores a second tap in the first 20 seconds (that tap meant
-"start", not "stop"). To abort a take that just started: `registra stop`.
+"start", not "stop"). To abort a take that just started: `record stop`.
 
 ## Dual displays
 
 ffmpeg sees `Capture screen 0` and `Capture screen 1`. They match
 `CGGetActiveDisplayList` order. Default is screen 0 (usually the built-in
-panel). Set `REGISTRA_SCREEN=1` in `~/.config/registra/config` to record
+panel). Set `RECORD_SCREEN=1` in `~/.config/record/config` to record
 the other one.
 
 The red dot is the ground truth: it is drawn on the display that ffmpeg
@@ -115,10 +115,10 @@ With headphones, the microphone hears only you: other voices come out of
 the headphones and never hit the mic. If BlackHole is installed, every
 start creates two virtual devices on the fly:
 
-- **Registra-Out** = current output (AirPods, speakers, whatever is
+- **Record-Out** = current output (AirPods, speakers, whatever is
   selected right now) + BlackHole: you hear everything as before, and a
   copy goes down the "cable"
-- **Registra-In** = microphone + BlackHole: ffmpeg records this, so both
+- **Record-In** = microphone + BlackHole: ffmpeg records this, so both
   voices
 
 On stop, output returns to what it was and the devices disappear. Without
@@ -130,5 +130,5 @@ multi-output device; volume is adjusted from the call app.
 
 - **The microphone records other people too.** On a call, say so or stop.
 - If you forget to stop and close the Mac: files already closed (one per
-  hour) are safe; you lose at most the last hour. `registra stop` the next
+  hour) are safe; you lose at most the last hour. `record stop` the next
   morning transcribes what is there.
