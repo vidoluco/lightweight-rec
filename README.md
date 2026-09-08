@@ -10,12 +10,18 @@ Copilot, or from none of them.
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey.svg)](#requirements)
 [![CI](https://github.com/vidoluco/lightweight-rec/actions/workflows/ci.yml/badge.svg)](https://github.com/vidoluco/lightweight-rec/actions/workflows/ci.yml)
 
-<!-- Demo slot: drop the capture in as docs/demo.gif and uncomment the line below.
-     How to shoot it: CONTRIBUTING.md, "Shooting the demo". -->
+<!-- Demo slot: drop a real capture in as docs/demo.gif and uncomment the line below.
+     How to shoot it: CONTRIBUTING.md, "Shooting the demo". Until then, the drawing
+     of the note stands in. -->
 <!-- ![Option+R, a red dot on the captured display, and the note it files in Obsidian](docs/demo.gif) -->
 
 That note is the product. Here is one, filed as
 `2026-05-14 1132 Retry Budget For The Ingest Worker.md`:
+
+<img src="docs/note.svg" alt="The Markdown note lightweight-rec files: frontmatter with tags and date, a title, a summary, the path of the video, what was on screen with timestamps, and the transcript." width="100%">
+
+<details>
+<summary>The same note as Markdown</summary>
 
 ```markdown
 ---
@@ -51,6 +57,8 @@ the alert threshold for a follow-up.
 [00:00:00.000 --> 00:00:06.400]  So the duplicates all come from the same worker, every one of them on the fifth attempt.
 [00:00:06.400 --> 00:00:14.200]  Right, and we never mark the row as consumed, so the retry writes it again.
 ```
+
+</details>
 
 ## What it is
 

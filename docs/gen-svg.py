@@ -13,6 +13,7 @@ Three drawings:
                 arriving on the right, the title above
   rec-flow.svg  the pipeline, with the optional AI box that RECORD_AI=0 skips
   any-cli.svg   one config line switching between the three CLIs
+  note.svg      the note as it is filed, the README's example, typing itself in
 """
 import os
 import sys
@@ -384,9 +385,92 @@ def any_cli():
     return "\n".join(parts)
 
 
+# =====================================================================
+# note.svg: the note, as it is filed, typing itself in
+# =====================================================================
+def note():
+    W, H = 1280, 680
+    parts = [svg_open(W, H, "The note, as filed",
+                      "The Markdown note lightweight-rec files: frontmatter with tags and date, a title, a "
+                      "summary, the path of the video, what was on screen with timestamps, and the transcript.")]
+    parts.append(corners(W, H))
+    parts.append(caption(64, 52, "THE NOTE · AS FILED IN THE VAULT"))
+    parts.append(caption(W - 64, 52, "TEXT ONLY · THE VIDEO STAYS OUT OF THE VAULT", anchor="end"))
+    # (style, text) per line. Styles: fm frontmatter, h1, p, h2, li, tr.
+    lines = [("fm", "---"),
+             ("fm", "tags: [meeting,backend,retry-policy]"),
+             ("fm", "date: 2026-05-14"),
+             ("fm", "type: recording"),
+             ("fm", "---"),
+             ("h1", "Retry Budget For The Ingest Worker"),
+             ("p", "The pair walked through the ingest worker's retry path and agreed the fixed 5-attempt loop"),
+             ("p", "is what produces Monday's duplicate rows. They settled on exponential backoff with a"),
+             ("p", "dead-letter queue after the third failure, and left the alert threshold for a follow-up."),
+             ("k", "Video (on the Mac, deleted after 14 days): /Users/you/Recordings/2026-05-14_09-30.mp4"),
+             ("h2", "What was on screen"),
+             ("li", "(at 0:00) A terminal on a branch named feature/ingest-retry. A failing test run: 2 failed, 41 passed."),
+             ("li", "(at 12:40) A browser tab titled \"Ingest worker dashboard\": headers attempt, status, duration_ms."),
+             ("h2", "Transcript"),
+             ("tr", "[00:00:00.000 --> 00:00:06.400]  So the duplicates all come from the same worker, on the fifth attempt."),
+             ("tr", "[00:00:06.400 --> 00:00:14.200]  Right, and we never mark the row as consumed, so the retry writes it again.")]
+    x0 = 96
+    y = 96
+    t = 0.3
+    defs, body = [], []
+    for i, (style, text) in enumerate(lines):
+        after = 0  # extra space below a heading, applied once the clip is placed
+        if style == "h1":
+            y += 26
+            size, dur, after = 36, 0.9, 26
+            el = f'<text class="serif" x="{x0}" y="{y}" fill="{INK}" font-size="{size}">{text}</text>'
+        elif style == "h2":
+            y += 18
+            size, dur, after = 24, 0.5, 10
+            el = f'<text class="serif" x="{x0}" y="{y}" fill="{INK}" font-size="{size}">{text}</text>'
+        elif style == "fm":
+            size, dur = 15, 0.35
+            el = f'<text class="mono" x="{x0}" y="{y}" fill="{MUTED}" font-size="{size}">{text}</text>'
+        elif style == "k":
+            y += 6
+            size, dur = 14, 0.6
+            el = f'<text class="mono" x="{x0}" y="{y}" fill="{MUTED}" font-size="{size}">{text}</text>'
+        elif style == "li":
+            size, dur = 15, 0.7
+            el = (f'<text class="mono" x="{x0}" y="{y}" fill="{RED}" font-size="{size}">▸</text>'
+                  f'<text class="mono" x="{x0+20}" y="{y}" fill="{INK}" font-size="{size}">{text}</text>')
+        elif style == "tr":
+            size, dur = 15, 0.8
+            stamp, said = text.split("  ", 1)
+            el = (f'<text class="mono" x="{x0}" y="{y}" fill="{MUTED}" font-size="14">{stamp}</text>'
+                  f'<text class="mono" x="{x0+300}" y="{y}" fill="{INK}" font-size="{size}">{said}</text>')
+        else:
+            size, dur = 15, 0.7
+            el = f'<text class="mono" x="{x0}" y="{y}" fill="{INK}" font-size="{size}">{text}</text>'
+        # The clip window is generous above and below the baseline, so serif
+        # ascenders and descenders are never cut while the line types in.
+        h = size + 18
+        defs.append(f'<clipPath id="n{i}"><rect x="{x0-4}" y="{y-size-6}" width="0" height="{h}">'
+                    f'<animate attributeName="width" from="0" to="{W-x0-60}" begin="{t:.2f}s" dur="{dur}s" calcMode="linear" fill="freeze"/>'
+                    f'</rect></clipPath>')
+        body.append(f'<g clip-path="url(#n{i})">{el}</g>')
+        t += dur + 0.12
+        y += 24 + after
+    # the caret sits on the line being written, then rests at the end
+    parts.append(f'<defs>{"".join(defs)}</defs>')
+    parts.append(f'<path d="M64 76 V{y+2}" stroke="{LINE}" stroke-width="2"/>')
+    parts.extend(body)
+    # the stamp: the file name the note was saved under, once the text is in
+    stamp = "2026-05-14 1132 Retry Budget For The Ingest Worker.md"
+    parts.append(f'<g opacity="0"><animate attributeName="opacity" from="0" to="1" begin="{t+0.2:.2f}s" dur="0.6s" fill="freeze"/>'
+                 f'<text class="mono" x="{W-64}" y="{H-22}" text-anchor="end" fill="{OK}" font-size="13" letter-spacing="2">FILED · {stamp}</text></g>')
+    parts.append(caption(64, H - 22, "CLI: TITLE · TAGS · SUMMARY · SCREEN", color=DIM, size=13))
+    parts.append('</svg>')
+    return "\n".join(parts)
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
-    for name, fn in (("header.svg", header), ("rec-flow.svg", rec_flow), ("any-cli.svg", any_cli)):
+    for name, fn in (("header.svg", header), ("rec-flow.svg", rec_flow), ("any-cli.svg", any_cli), ("note.svg", note)):
         with open(os.path.join(OUT, name), "w", encoding="utf-8") as f:
             f.write(fn())
         print(name, os.path.getsize(os.path.join(OUT, name)), "bytes")
