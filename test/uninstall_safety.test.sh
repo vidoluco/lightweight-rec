@@ -220,7 +220,7 @@ else
 fi
 # Recognised as ours, so the reader is not sent off to edit a file that is
 # already gone. Matched on the heading, not on the words "left alone": the
-# report says that about the claude CLI too, in every run.
+# report says that about the AI CLI too, in every run.
 if printf '%s\n' "$out" | grep -qF 'your skhd config was left alone'; then
   bad "ours-only-legacy: the old binding was not recognised, the config was left alone"
 fi

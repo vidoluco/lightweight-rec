@@ -9,11 +9,11 @@
 #
 # What runs where: capture (ffmpeg), the red dot overlay and the transcription
 # (whisper.cpp) all run on this Mac, offline and at no cost. One thing does
-# not: the optional `claude` CLI, which sends the transcript and a few screen
-# frames to Anthropic and needs a paid Anthropic plan (subscription or API
-# credit). It is not required, and RECORD_CLAUDE=0 turns it off for good.
-# Without it the note is still written, minus the title, the tags, the summary
-# and the screen description.
+# not: the optional AI CLI named by RECORD_AI (claude, cursor or copilot),
+# which sends the transcript and a few screen frames to its vendor and needs
+# that vendor's paid plan. It is not required, and RECORD_AI=0 turns it off
+# for good. Without it the note is still written, minus the title, the tags,
+# the summary and the screen description.
 #
 # How it stays small:
 #   - screen at 1 frame per second, hardware HEVC at a low bitrate (~110 MB/hour)
@@ -49,10 +49,17 @@ DOT="${RECORD_DOT:-$HOME/bin/record-dot}"
 AUDIO_HELPER="${RECORD_AUDIO:-$HOME/bin/record-audio}"
 SCREEN="${RECORD_SCREEN:-0}"    # ffmpeg "Capture screen N"; red dot follows this
 MIC="${RECORD_MIC:-}"           # empty: resolve the input device on every start
-# The two switches that are on unless the user says otherwise. Read once here
-# so the defaults live in one place, and compared with is_off, which only
-# accepts a deliberate 0/no/off/false.
-CLAUDE_ON="${RECORD_CLAUDE:-1}"          # off: never call the claude CLI at all
+# The switches that are on unless the user says otherwise. Read once here so
+# the defaults live in one place, and compared with is_off, which only accepts
+# a deliberate 0/no/off/false.
+# RECORD_AI names the CLI that writes the title, tags, summary and screen
+# description: claude, cursor or copilot. 0 means no call at all, so nothing
+# leaves the Mac. RECORD_CLAUDE=0 is the old name of that switch and still
+# counts, so a config written for an earlier version keeps its egress off.
+AI="${RECORD_AI:-claude}"
+is_off "${RECORD_CLAUDE:-1}" && AI=0
+AI_VISION_MODEL="${RECORD_AI_VISION_MODEL:-}"  # empty: the CLI's own default, see ai_defaults
+AI_META_MODEL="${RECORD_AI_META_MODEL:-}"
 SYSTEM_AUDIO="${RECORD_SYSTEM_AUDIO:-1}" # off: no BlackHole aggregate, RECORD_MIC wins
 LAUNCH_APP="${RECORD_LAUNCH_APP:-}"   # empty: this tool opens no other app
 DAYS="${RECORD_DAYS:-14}"       # mp4 files older than this are deleted on start
@@ -66,6 +73,113 @@ DOTPID="$DIR/.dot.pid"
 # cleanup matches the exact shape ffmpeg writes (-strftime %Y-%m-%d_%H-%M.mp4)
 # and never a stranger's archive that happens to live in the same folder.
 CLIPS='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9].mp4'
+
+# The AI CLI is the one optional, paid, off-machine piece, and three of them
+# are known. Each is driven the way its own headless mode wants: claude takes
+# the transcript on stdin and opens the frames with its Read tool; cursor-agent
+# takes everything in the prompt and opens the frames itself in ask mode,
+# which is read-only, inside a workspace that is the scratch directory and
+# nothing else; copilot gets the frames as attachments and the transcript in
+# the prompt, with every tool switched off. stderr is left alone on purpose:
+# a CLI that is not signed in, or asked for a model it does not have, says so
+# there, and .transcribe.log is where that line has to end up.
+ai_off() { is_off "$AI"; }
+
+# The binary behind RECORD_AI, or nothing for a name this tool does not know.
+ai_bin() {
+  case "$AI" in
+    claude)  echo claude ;;
+    cursor)  echo cursor-agent ;;
+    copilot) echo copilot ;;
+    *)       echo "" ;;
+  esac
+}
+
+# Per-CLI models, applied only where RECORD_AI_*_MODEL left a blank. The ids
+# are the ones each CLI lists itself (`cursor-agent models`, Copilot's model
+# picker). A model the CLI does not carry makes the call fail and the note say
+# so, on purpose: a silent downgrade would hide what was actually sent where.
+ai_defaults() {
+  case "$AI" in
+    claude)  : "${AI_VISION_MODEL:=sonnet}";             : "${AI_META_MODEL:=haiku}" ;;
+    cursor)  : "${AI_VISION_MODEL:=cursor-grok-4.6-high}"; : "${AI_META_MODEL:=cursor-grok-4.6-high}" ;;
+    copilot) : "${AI_VISION_MODEL:=gemini-3.8-flash}";    : "${AI_META_MODEL:=gemini-3.8-flash}" ;;
+  esac
+}
+
+AI_RULES="Write in English what the screen showed. Hard rules:
+- Copy readable text LITERALLY: window or call title, URL, repo and project names, table headers and values, visible participant names.
+- If text is blurry, say it is unreadable. NEVER invent a number, a name, or a URL.
+- If the screen barely changes, say so in one line and list only the instants where something changes.
+- Anchor every observation to the frame timestamp.
+- At most 15 lines."
+
+# One screen description. $1 is the frame map (one path and its offset per
+# line), $2 the directory those frames live in. The answer goes to stdout.
+ai_vision() {
+  local map="$1" frames="$2" f
+  local eyes="You are the eyes of someone who missed this meeting and has to remember it."
+  case "$AI" in
+    claude)
+      claude -p "$eyes
+Read these screen frames with Read, one by one, in order:
+
+$map
+
+$AI_RULES" --model "$AI_VISION_MODEL" --allowedTools Read ;;
+    cursor)
+      cursor-agent -p --mode ask --trust --workspace "$frames" --output-format text \
+        --model "$AI_VISION_MODEL" "$eyes
+Open these screen frames, JPEG files in this workspace, one by one, in order:
+
+$map
+
+$AI_RULES" ;;
+    copilot)
+      local attach=()
+      while IFS= read -r f; do
+        [ -n "$f" ] && attach+=(--attachment "$f")
+      done < <(find "$frames" -name 'k*.jpg' | sort)
+      copilot -p "$eyes
+The attached screen frames are in order. This is when each one was taken:
+
+$map
+
+$AI_RULES" -s --no-custom-instructions --no-ask-user --available-tools= \
+        --model "$AI_VISION_MODEL" "${attach[@]}" ;;
+  esac
+}
+
+# Title, tags and summary. The transcript arrives on stdin, already cut to the
+# size the call may send; $1 is a scratch directory the CLI may treat as its
+# workspace. Three lines on stdout, parsed by the caller.
+ai_meta() {
+  local work="$1"
+  local ask="This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
+TITLE: <max 6 words, in English, specific to the content>
+TAGS: <2-4 short kebab-case tags separated by space, e.g. meeting standup planning>
+SUMMARY: <2-3 sentences on the content and any decisions>"
+  case "$AI" in
+    claude)
+      claude -p --model "$AI_META_MODEL" "$ask" ;;
+    cursor)
+      cursor-agent -p --mode ask --trust --workspace "$work" --output-format text \
+        --model "$AI_META_MODEL" "$ask
+
+=== TRANSCRIPT ===
+$(cat)" ;;
+    copilot)
+      copilot -p "$ask
+
+=== TRANSCRIPT ===
+$(cat)" -s --no-custom-instructions --no-ask-user --available-tools= \
+        --model "$AI_META_MODEL" ;;
+  esac
+}
+
+# The phrases the three CLIs print instead of an answer when they cannot give
+# one. Matched against stdout, because that is where a wrapped-up error lands.
+AI_REFUSAL='not logged in|please run /login|invalid api key|credit balance|usage limit|unauthorized|unauthenticated|unknown model|not available|invalid model|rate limit|quota|login required|sign in'
 
 running() {
   # the pidfile is not enough: two Option+R in a row can start a second ffmpeg
@@ -254,9 +368,30 @@ case "$cmd" in
     done < <(find "$DIR" -maxdepth 1 -name "$CLIPS" -newer "$SESSION" -print0 | sort -z)
     [ "${#FILES[@]}" -gt 0 ] || { echo "No new video."; exit 0; }
 
-    if is_off "$CLAUDE_ON"; then
-      echo "RECORD_CLAUDE is off: no claude call. The note gets the full"
-      echo "transcript, a generic title and no screen description."
+    # Whether the AI CLI runs at all is settled once, here, and the reason a
+    # note ends up without a summary is remembered so the note can say it:
+    # a choice (off), a typo (unknown name), a missing binary, or a CLI that
+    # exists and answered nothing. The last used to be indistinguishable from
+    # the first, with the error swallowed by 2>/dev/null.
+    AI_SILENT=0
+    AI_WHY=""
+    AI_BIN=$(ai_bin)
+    if ai_off; then
+      AI_WHY="off"
+      echo "RECORD_AI is off: no AI call. The note gets the full transcript,"
+      echo "a generic title and no screen description."
+    elif [ -z "$AI_BIN" ]; then
+      AI_WHY="unknown"
+      echo "RECORD_AI is \"$AI\", which is not claude, cursor or copilot: no AI call." >&2
+      echo "The note gets the full transcript, a generic title and no screen description."
+      AI=0
+    elif ! command -v "$AI_BIN" >/dev/null 2>&1; then
+      AI_WHY="missing"
+      echo "The \`$AI_BIN\` CLI is not installed (RECORD_AI=$AI): no AI call." >&2
+      AI=0
+    else
+      ai_defaults
+      echo "AI: $AI ($AI_BIN), screen frames with $AI_VISION_MODEL, title and summary with $AI_META_MODEL."
     fi
 
     # One scratch directory for the whole run, removed on every exit path,
@@ -293,8 +428,13 @@ case "$cmd" in
       # discarded the error, left the file out of SKIPPED, and let the note
       # claim the transcript was complete. An hour lost that way is
       # indistinguishable from an hour in which nobody spoke.
-      if ! chunk=$(whisper-cli -m "$MODEL" -f "$wav" -l auto -np 2>&1); then
+      # stderr is kept apart from the transcript: whisper.cpp 0.17 announces
+      # its backends there on every run, and captured with 2>&1 those lines
+      # opened every transcript section in the note. It is shown only when
+      # the run failed, which is when it says something.
+      if ! chunk=$(whisper-cli -m "$MODEL" -f "$wav" -l auto -np 2>"$WORK/whisper.err"); then
         echo "Skipped $(basename "$f"): whisper-cli failed to transcribe it."
+        tail -5 "$WORK/whisper.err" 2>/dev/null | sed 's/^/  /'
         SKIPPED="$SKIPPED
 - \`$f\` (transcription failed)"
         rm -f "$wav"
@@ -310,9 +450,9 @@ $chunk
       # dashboard, audio alone does not say what was on screen.
       # frames are spread over the whole duration, not on scene cuts: in a
       # call the webcams change constantly and would bias the first seconds.
-      # All of it exists only to feed the claude CLI, so RECORD_CLAUDE=0 skips
-      # the extraction too rather than writing JPEGs nobody will read.
-      if is_off "$CLAUDE_ON"; then
+      # All of it exists only to feed the AI CLI, so RECORD_AI=0 skips the
+      # extraction too rather than writing JPEGs nobody will read.
+      if ai_off; then
         continue
       fi
       duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" 2>/dev/null || echo 0)
@@ -329,22 +469,13 @@ $chunk
       if [ -n "$listing" ]; then
         map=$(echo "$listing" | awk -v n="$n_frame" -v d="$duration" \
           '{ t=int((NR-1)*d/n); printf "%s  (at %d:%02d from start)\n", $0, int(t/60), t%60 }')
-        descr=$(claude -p "You are the eyes of someone who missed this meeting and has to remember it.
-Read these screen frames with Read, one by one, in order:
-
-$map
-
-Write in English what the screen showed. Hard rules:
-- Copy readable text LITERALLY: window or call title, URL, repo and project names, table headers and values, visible participant names.
-- If text is blurry, say it is unreadable. NEVER invent a number, a name, or a URL.
-- If the screen barely changes, say so in one line and list only the instants where something changes.
-- Anchor every observation to the frame timestamp.
-- At most 15 lines." --model sonnet --allowedTools Read 2>/dev/null || true)
-        if echo "$descr" | grep -qiE "not logged in|please run /login|invalid api key|credit balance|usage limit"; then
-          echo "Screen read skipped: claude did not answer ($(echo "$descr" | head -1))" >&2
+        descr=$(ai_vision "$map" "$frames" || true)
+        if echo "$descr" | grep -qiE "$AI_REFUSAL"; then
+          echo "Screen read skipped: $AI did not answer ($(echo "$descr" | head -1))" >&2
           descr=""
         fi
         [ "${#descr}" -lt 60 ] && descr=""
+        [ -n "$descr" ] || AI_SILENT=1
         [ -n "$descr" ] && VISUAL="$VISUAL
 ### $(basename "$f" .mp4 | tr '_' ' ')
 $descr
@@ -356,19 +487,27 @@ $descr
     STAMP=$(date '+%Y-%m-%d %H%M')
     DAY=$(date '+%Y-%m-%d')
 
-    # title, tags, summary from content. If claude does not answer, the note
+    # title, tags, summary from content. If the CLI does not answer, the note
     # is still written, raw.
     # The one call that costs money per session. Off means no call and an
     # empty META, which is exactly the shape a failed call already produced:
     # the fallbacks below fill in a generic title and the note is written.
     META=""
-    if ! is_off "$CLAUDE_ON"; then
+    if ! ai_off; then
       META=$(printf '%s\n\n=== WHAT WAS ON SCREEN ===\n%s\n' "$TEXT" "$VISUAL" \
-        | head -c 30000 | claude -p --model haiku \
-        "This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
-TITLE: <max 6 words, in English, specific to the content>
-TAGS: <2-4 short kebab-case tags separated by space, e.g. meeting standup planning>
-SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
+        | head -c 30000 | ai_meta "$WORK" || true)
+      if echo "$META" | grep -qiE "$AI_REFUSAL"; then
+        echo "Title and summary skipped: $AI did not answer ($(echo "$META" | head -1))" >&2
+        META=""
+      fi
+      [ -n "$META" ] || AI_SILENT=1
+      # Copilot wraps what it prints at 100 columns, terminal or not, so a
+      # summary of any length arrives as several lines and only the first
+      # would be kept. Fold every continuation line back onto its field.
+      META=$(printf '%s\n' "$META" | awk '
+        /^(TITLE|TAGS|SUMMARY):/ { if (line != "") print line; line = $0; next }
+        { sub(/^[[:space:]]+/, ""); if (line != "" && $0 != "") line = line " " $0 }
+        END { if (line != "") print line }')
     fi
 
     TITLE=$(echo "$META" | sed -n 's/^TITLE: *//p' | head -1)
@@ -397,18 +536,31 @@ SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
       echo "# $TITLE"
       echo
       [ -n "$SUMMARY" ] && { echo "$SUMMARY"; echo; }
-      # Both reasons get said. An absent claude used to produce a note
-      # identical to a deliberate RECORD_CLAUDE=0, with the error swallowed by
-      # 2>/dev/null, so the reader had no way to tell a choice from a fault.
-      if is_off "$CLAUDE_ON"; then
-        echo "*No title, tags, summary or screen description: RECORD_CLAUDE is off.*"
-        echo "*The transcript below is what was said.*"
-        echo
-      elif ! command -v claude >/dev/null 2>&1; then
-        echo "*No title, tags, summary or screen description: the \`claude\` CLI*"
-        echo "*is not installed. The transcript below is what was said.*"
-        echo
-      fi
+      # Every reason gets said. An absent CLI used to produce a note identical
+      # to a deliberate off switch, with the error swallowed by 2>/dev/null, so
+      # the reader had no way to tell a choice from a fault.
+      case "$AI_WHY" in
+        off)
+          echo "*No title, tags, summary or screen description: RECORD_AI is off.*"
+          echo "*The transcript below is what was said.*"
+          echo ;;
+        unknown)
+          echo "*No title, tags, summary or screen description: RECORD_AI is set to*"
+          echo "*\`${RECORD_AI:-}\`, which is not claude, cursor or copilot. The transcript*"
+          echo "*below is what was said.*"
+          echo ;;
+        missing)
+          echo "*No title, tags, summary or screen description: the \`$AI_BIN\` CLI*"
+          echo "*is not installed. The transcript below is what was said.*"
+          echo ;;
+        *)
+          if [ "$AI_SILENT" = 1 ]; then
+            echo "*The \`$AI\` CLI did not answer for part or all of this note (model*"
+            echo "*$AI_VISION_MODEL / $AI_META_MODEL): what it said is in \`.transcribe.log\`*"
+            echo "*next to the videos. The transcript below is what was said.*"
+            echo
+          fi ;;
+      esac
       echo "**Video** (on the Mac, deleted after $DAYS days):"
       for f in "${FILES[@]}"; do echo "- \`$f\`"; done
       if [ -n "$SKIPPED" ]; then

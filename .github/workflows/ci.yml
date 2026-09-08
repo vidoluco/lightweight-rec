@@ -6,8 +6,8 @@ name: CI
 # under test/ is green, and every Swift helper still compiles.
 #
 # It CANNOT prove: anything that needs a TCC permission grant (Screen
-# Recording, Microphone, Accessibility), a real capture, BlackHole, skhd, the
-# claude CLI, or a whisper transcription. A GitHub runner cannot click a
+# Recording, Microphone, Accessibility), a real capture, BlackHole, skhd, any
+# of the AI CLIs, or a whisper transcription. A GitHub runner cannot click a
 # System Settings dialog. Every change to the capture or audio path still has
 # to be exercised by hand on a real Mac before it is merged.
 #

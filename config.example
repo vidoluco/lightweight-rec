@@ -32,7 +32,19 @@
 # 0 turns off BlackHole full-call audio: the microphone alone, no aggregates.
 # RECORD_SYSTEM_AUDIO=1
 
-# 0 never calls the claude CLI: no egress, no title, tags, summary or screen text.
+# The CLI that writes the title, tags, summary and screen description, and the
+# only piece that sends anything off the Mac: claude, cursor or copilot. It has
+# to be installed and signed in already; install.sh does not touch it.
+# 0 never calls any of them: no egress, no title, tags, summary or screen text.
+# RECORD_AI=claude
+
+# The model each call uses, in the id the CLI itself lists. Empty picks the
+# CLI's default: claude sonnet then haiku, cursor cursor-grok-4.6-high,
+# copilot gemini-3.8-flash. Screen frames first, then title and summary.
+# RECORD_AI_VISION_MODEL=""
+# RECORD_AI_META_MODEL=""
+
+# The old name of the off switch. 0 still means no call at all.
 # RECORD_CLAUDE=1
 
 # Retention in days for this tool's own mp4 files in RECORD_DIR.

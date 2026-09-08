@@ -6,8 +6,9 @@ patch for something this project has decided not to be.
 ## Scope
 
 One hotkey and four moving parts: ffmpeg captures a display at 1 fps plus
-audio, whisper.cpp transcribes it locally, the optional `claude` CLI writes a
-title, tags and a summary, and a Markdown note lands in your own vault. No
+audio, whisper.cpp transcribes it locally, an optional AI CLI (`claude`,
+`cursor-agent` or `copilot`, picked by `RECORD_AI`) writes a title, tags and a
+summary, and a Markdown note lands in your own vault. No
 database, no index, no daemon, no UI, and it is meant to stay that way.
 
 Welcome: correctness and robustness fixes, especially on hardware the author
@@ -136,8 +137,8 @@ section and the timestamped transcript all in one frame. Save it as
 
 Screen Recording, Microphone and the Accessibility grant skhd needs are given
 per binary, by hand, in System Settings. CI has none of them, and no
-BlackHole, no whisper model and no `claude` CLI either, so it never observes a
-real recording. The start, capture, stop, transcribe, note path is verified by
+BlackHole, no whisper model and none of the AI CLIs either, so it never
+observes a real recording. The start, capture, stop, transcribe, note path is verified by
 a human on real hardware or not at all.
 
 That makes the pull request text load-bearing. Say what you exercised by hand

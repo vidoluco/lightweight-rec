@@ -383,6 +383,7 @@ echo "    brew uninstall --cask blackhole-2ch   # audio driver: asks for your pa
 echo "  Handy is not in that list: install.sh only installs it when you ask for"
 echo "  it with --with-handy. If you did, 'brew uninstall --cask handy' removes"
 echo "  it, and RECORD_LAUNCH_APP in your config is what used to open it."
-echo "  The claude CLI is left alone: install.sh never put it there."
+echo "  The AI CLI (claude, cursor-agent or copilot) is left alone: install.sh"
+echo "  never put it there."
 echo
 echo "Repo left in place at $ROOT. Delete the clone when you are done."

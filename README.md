@@ -1,8 +1,10 @@
-# lightweight-rec
+<img src="docs/header.svg" alt="lightweight-rec. One shortcut records the screen at one frame per second with the microphone, transcribes on the Mac, and files a Markdown note in your vault." width="100%">
 
 Press Option+R. One display is recorded at 1 frame per second, your microphone
 with it, locally. Press it again: a Markdown note, transcript included, appears
-in the Obsidian vault you already use.
+in the Obsidian vault you already use. The title, tags and summary come from
+whichever coding CLI you already have signed in, Claude Code, Cursor or
+Copilot, or from none of them.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey.svg)](#requirements)
@@ -56,6 +58,11 @@ One mp4 per hour, a red dot on the captured display while a take runs, and
 transcript sections named after their video file, so the note takes you to the
 right minute of the right hour.
 
+<img src="docs/rec-flow.svg" alt="Option R, then capture at one frame per second with the microphone, whisper on the Mac, an optional pass through the AI CLI named in RECORD_AI for title, tags and summary, and a Markdown note in your vault. The grey dot is the path with RECORD_AI=0." width="100%">
+
+<details>
+<summary>The same pipeline as text</summary>
+
 ```
 Option+R ──► red dot on the captured display (Capture screen N, default 0)
              ffmpeg: 1 fps screen + microphone, hardware HEVC
@@ -66,15 +73,45 @@ Option+R ──► stop │
                  ▼
              whisper-cli (large-v3-turbo q5_0, local) transcribes with timestamps
                  ▼
-             claude -p (sonnet) reads 8 to 30 evenly spaced screen frames   optional,
-             claude -p (haiku) picks title, tags and summary                paid,
-                 │                                                          off-machine
+             the CLI named by RECORD_AI reads 8 to 30 evenly spaced   optional,
+             screen frames, then picks title, tags and summary        paid,
+                 │                                                    off-machine
                  │
-                 │        RECORD_CLAUDE=0 skips both calls and extracts no frames:
+                 │        RECORD_AI=0 skips both calls and extracts no frames:
                  │        nothing leaves the Mac and the note is still written
                  ▼
              note in the Obsidian vault, folder Recordings/  (text only)
 ```
+
+</details>
+
+## Plug any CLI
+
+<img src="docs/any-cli.svg" alt="One config line, RECORD_AI, picks which CLI writes the title, tags, summary and screen description: Claude Code, Cursor CLI or Copilot CLI. The note is the same either way." width="100%">
+
+The title, tags, summary and screen description come from a coding CLI you
+already have on the machine and signed in. One line in
+`~/.config/record/config` picks it. Nothing else in the pipeline changes, and
+neither does the note.
+
+| `RECORD_AI` | Binary | Default models | How the frames reach it |
+|---|---|---|---|
+| `claude` (default) | `claude` | `sonnet` for the frames, `haiku` for the metadata | by path, with the `Read` tool and nothing else allowed |
+| `cursor` | `cursor-agent` | `cursor-grok-4.6-high` for both | it opens them itself, in read-only ask mode, inside a workspace that is the scratch directory and nothing else |
+| `copilot` | `copilot` | `gemini-3.8-flash` for both | as attachments, with every tool switched off |
+
+```bash
+RECORD_AI=copilot                         # or cursor, or claude, or 0 for no call at all
+RECORD_AI_VISION_MODEL=gemini-3.8-flash   # optional: the model that reads the frames
+RECORD_AI_META_MODEL=gemini-3.8-flash     # optional: the model that writes title, tags, summary
+```
+
+The model ids are the ones the CLI itself lists (`cursor-agent models`, or
+Copilot's `/model` picker). `install.sh` installs none of the three and checks
+none of them. A model the CLI does not carry makes the call fail, and the note
+says so with the CLI's own error kept in `.transcribe.log`, rather than
+quietly answering with another model. `RECORD_CLAUDE=0`, the switch's name in
+earlier releases, still means off.
 
 ## Why this exists, and how it differs
 
@@ -113,7 +150,7 @@ session you would otherwise write yourself.
 | Disk | 574 MB once for the whisper model, verified by size and SHA-256, plus about 110 MB per recorded hour: see [Cost and footprint](#cost-and-footprint). |
 | Microphone | Any. Left unset, the input is resolved on every start: the built-in microphone under whatever name your Mac model gives it, else any other real microphone. Loopback and meeting-app devices are never picked. `RECORD_MIC` overrides that choice, on the [full call audio](#full-call-audio-blackhole) path too. |
 | BlackHole 2ch | Optional and opt in, `./install.sh --with-blackhole`: it is an audio driver and asks for your admin password. Without it, on headphones only your own voice is recorded. See [Full call audio](#full-call-audio-blackhole). |
-| `claude` CLI | Optional, and the only non-local, paid piece: it needs an Anthropic subscription or API credit, and `install.sh` neither installs nor checks it. Without it, or with `RECORD_CLAUDE=0`, the note still lands with the full transcript, titled `Recorded session`, with no summary and no screen section. |
+| An AI CLI | Optional, and the only non-local, paid piece: `claude`, `cursor-agent` or `copilot`, whichever `RECORD_AI` names, signed in to its own paid plan. `install.sh` neither installs nor checks it. Without it, or with `RECORD_AI=0`, the note still lands with the full transcript, titled `Recorded session`, with no summary and no screen section. See [Plug any CLI](#plug-any-cli). |
 
 ## Quickstart
 
@@ -179,15 +216,20 @@ your shell rc, so that file is the only override Option+R sees. Copy
 | `RECORD_SCREEN` | `0` | which `Capture screen N` is recorded, and where the dot goes |
 | `RECORD_MIC` | empty | the microphone to record from, by device name; empty resolves one on every start. It decides on every path, BlackHole included, where it names the microphone inside Record-In: see [Full call audio](#full-call-audio-blackhole) |
 | `RECORD_SYSTEM_AUDIO` | `1` | `0` gives up the BlackHole aggregates: the microphone alone, opened directly by ffmpeg |
-| `RECORD_CLAUDE` | `1` | `0` stops every call to the `claude` CLI: no egress, no frames extracted, no title, tags, summary or screen description |
+| `RECORD_AI` | `claude` | the CLI that writes the title, tags, summary and screen description: `claude`, `cursor` or `copilot`. `0` stops every call: no egress, no frames extracted, no title, tags, summary or screen description |
+| `RECORD_AI_VISION_MODEL` | empty | the model that reads the screen frames, in the id the CLI lists; empty is the CLI's default (`sonnet`, `cursor-grok-4.6-high`, `gemini-3.8-flash`) |
+| `RECORD_AI_META_MODEL` | empty | the model that writes the title, tags and summary; empty is the CLI's default (`haiku`, `cursor-grok-4.6-high`, `gemini-3.8-flash`) |
+| `RECORD_CLAUDE` | `1` | the old name of the off switch: `0` still means no call at all |
 | `RECORD_DAYS` | `14` | age past which this tool's own mp4 files are deleted, in days |
 | `RECORD_LAUNCH_APP` | empty | an app to `open -a` once the capture is up; empty launches nothing |
 | `RECORD_DOT` | `~/bin/record-dot` | the red dot overlay, if you moved it |
 | `RECORD_AUDIO` | `~/bin/record-audio` | the CoreAudio helper, if you moved it |
 | `RECORD_CONFIG` | `~/.config/record/config` | the config file itself, read from the environment only, so setting it inside that file does nothing |
 
-The two switches turn off on `0`, `no`, `off` or `false`, in any case; anything
-else, a typo included, leaves the feature on. `--with-blackhole` and
+The switches turn off on `0`, `no`, `off` or `false`, in any case; anything
+else, a typo included, leaves the feature on. `RECORD_AI` is the one
+exception: a value that is not `claude`, `cursor` or `copilot` makes no call
+and the note names the value it found. `--with-blackhole` and
 `--with-handy` are install-time flags and belong on the `./install.sh` command
 line, or as `RECORD_INSTALL_BLACKHOLE=1` and `RECORD_INSTALL_HANDY=1` in the
 environment, never in this file.
@@ -248,11 +290,13 @@ this tool, and the transcription, which whisper.cpp runs locally. The videos are
 kept out of the vault so they never reach iCloud.
 
 **What leaves the machine, and how to stop it.** One component, and it is
-optional: the `claude` CLI. Per mp4 it sends 8 to 30 JPEG frames of your screen,
-scaled to 1400 px wide, to Anthropic; once per session it sends the first 30000
-bytes of the transcript plus those descriptions. A four-hour take is five calls,
-not two. **`RECORD_CLAUDE=0` in `~/.config/record/config` removes that entirely**:
-no call, no frames even extracted, nothing leaves the Mac. The note is still
+optional: the AI CLI named by `RECORD_AI`. Per mp4 it sends 8 to 30 JPEG
+frames of your screen, scaled to 1400 px wide, to that CLI's vendor
+(Anthropic, Cursor or GitHub, and on to whichever model provider the vendor
+routes the chosen model to); once per session it sends the first 30000 bytes
+of the transcript plus those descriptions. A four-hour take is five calls, not
+two. **`RECORD_AI=0` in `~/.config/record/config` removes that entirely**: no
+call, no frames even extracted, nothing leaves the Mac. The note is still
 written, with the full transcript, a generic title and a line saying why the
 summary is missing. The full data flow is in [SECURITY.md](SECURITY.md).
 
@@ -311,9 +355,11 @@ which happens after a wake on an external monitor) its message goes nowhere.
 
 **No note appeared.** Transcription runs in the background after the stop; the
 log is `$RECORD_DIR/.transcribe.log`. `Whisper model missing at ...` means
-re-run `./install.sh`. A note titled `Recorded session` with no summary means
-`RECORD_CLAUDE=0` (the note itself says so) or a `claude` CLI that is missing,
-not logged in, or out of credit.
+re-run `./install.sh`. A note titled `Recorded session` with no summary says
+why in its first lines: `RECORD_AI` is off, names a CLI this tool does not
+know, names one that is not installed, or names one that answered nothing. In
+the last case the CLI is usually not signed in, out of credit, or asked for a
+model it does not carry, and its own error line is in `.transcribe.log`.
 
 **The note exists but Obsidian does not show it.** `RECORD_NOTES` is not inside
 a vault, meaning no `.obsidian` directory above it. The stop says so in a
@@ -359,14 +405,16 @@ before pasting anything from it: the recordings hold other people's voices.
 | Whisper model | 574 MB, once | `ggml-large-v3-turbo-q5_0.bin` |
 | CPU while recording | encoding runs on the video hardware, not the CPU | `hevc_videotoolbox` |
 | Transcription | local, one pass per mp4 | whisper.cpp |
-| `claude` calls per session | 1 per mp4 for the frames (sonnet), 1 per session for the metadata (haiku), 0 with `RECORD_CLAUDE=0` | `record`, transcribe path |
+| AI calls per session | 1 per mp4 for the frames, 1 per session for the metadata, 0 with `RECORD_AI=0` | `record`, transcribe path |
 | Frames sent per mp4 | 8 minimum, 30 maximum, spread over the whole file | `FRAME_MIN`, `FRAME_MAX` |
-| Transcript sent | first 30000 bytes | `head -c 30000` before the haiku call |
+| Transcript sent | first 30000 bytes | `head -c 30000` before the metadata call |
 
-On a paid Anthropic subscription those calls come out of your usage limits. On
-API credit the dominant term is the 30 images per recorded hour at 1400 px,
-which at current pricing lands between a few cents and roughly twenty cents an
-hour. An estimate, not a measurement, and `RECORD_CLAUDE=0` makes it zero.
+Those calls are billed by the CLI's own plan: Claude Code's usage limits or API
+credit, Cursor's request pricing, Copilot's premium requests. On Anthropic API
+credit the dominant term is the 30 images per recorded hour at 1400 px, which
+at current pricing lands between a few cents and roughly twenty cents an hour;
+a Flash-class model through Copilot or Cursor is cheaper per image. Estimates,
+not measurements, and `RECORD_AI=0` makes it zero.
 
 ## Components
 
@@ -382,7 +430,8 @@ hour. An estimate, not a measurement, and `RECORD_CLAUDE=0` makes it zero.
 | [switchaudio-osx](https://github.com/deweller/switchaudio-osx) | switches and restores the system output |
 | [BlackHole](https://github.com/ExistentialAudio/BlackHole) | optional loopback driver for full call audio, installed only with `--with-blackhole` |
 | [Handy](https://github.com/cjpais/handy) | push-to-talk dictation by another author, unrelated to the capture. Installed only with `--with-handy`, launched only if named in `RECORD_LAUNCH_APP` |
-| `claude` CLI | title, tags, summary, screen description: the only non-local, paid piece, and the only one that is off with a single config line |
+| `claude`, `cursor-agent` or `copilot` | title, tags, summary, screen description, whichever `RECORD_AI` names: the only non-local, paid piece, and the only one that is off with a single config line |
+| `docs/gen-svg.py` (this repo) | regenerates the three animated SVGs above, standard library only: `python3 docs/gen-svg.py docs` |
 
 ## Contributing and license
 

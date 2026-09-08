@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 260" width="1280" height="260" role="img" aria-label="Option R, then capture at one frame per second with the microphone, whisper on the Mac, an optional pass through the AI CLI you name in RECORD_AI for title, tags and summary, and a Markdown note in your vault.">
+<title>lightweight-rec pipeline</title>
+<style>
+  .mono{font-family:ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;}
+  .serif{font-family:"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.15}}
+  .live{animation:pulse 1.4s ease-in-out infinite}
+  @keyframes ring{0%{r:6;opacity:.9}100%{r:18;opacity:0}}
+  .ring{animation:ring 1.4s ease-out infinite}
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+  .cursor{animation:blink 1.1s steps(1) infinite}
+  @keyframes fadein{from{fill-opacity:0}to{fill-opacity:1}}
+  .l{fill-opacity:0;animation:fadein .7s ease-out forwards}
+  @keyframes scan{from{transform:translateY(-4px)}to{transform:translateY(264px)}}
+  .scan{animation:scan 9s linear infinite}
+  @keyframes press{0%,88%,100%{transform:translateY(0)}92%{transform:translateY(3px)}}
+  .key{animation:press 3.6s ease-in-out infinite}
+  @keyframes glow{0%,100%{stroke-opacity:.35}50%{stroke-opacity:1}}
+  .glow{animation:glow 2.4s ease-in-out infinite}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important}}
+</style>
+<rect width="1280" height="260" fill="#0F0D0C"/>
+<text class="mono" x="64" y="44" text-anchor="start" fill="#8A837A" font-size="15" letter-spacing="2.5">LIGHTWEIGHT-REC · ~110 MB / HOUR</text>
+<text class="mono" x="1216" y="44" text-anchor="end" fill="#8A837A" font-size="15" letter-spacing="2.5">RECORD_AI=0 SKIPS THE DASHED BOX</text>
+<path d="M222 122 H303" fill="none" stroke="#2A2522" stroke-width="2.0" stroke-dasharray="5 6"><animate attributeName="stroke-dashoffset" from="0" to="-22" dur="0.9s" repeatCount="indefinite"/></path>
+<path d="M499 122 H542" fill="none" stroke="#2A2522" stroke-width="2.0" stroke-dasharray="5 6"><animate attributeName="stroke-dashoffset" from="0" to="-22" dur="0.9s" repeatCount="indefinite"/></path>
+<path d="M738 122 H781" fill="none" stroke="#2A2522" stroke-width="2.0" stroke-dasharray="5 6"><animate attributeName="stroke-dashoffset" from="0" to="-22" dur="0.9s" repeatCount="indefinite"/></path>
+<path d="M977 122 H1020" fill="none" stroke="#2A2522" stroke-width="2.0" stroke-dasharray="5 6"><animate attributeName="stroke-dashoffset" from="0" to="-22" dur="0.9s" repeatCount="indefinite"/></path>
+<path d="M738 122 C798 122 808 62 879 62 S960 122 1020 122" fill="none" stroke="#2A2522" stroke-width="1.5" stroke-dasharray="5 6" stroke-opacity=".7"><animate attributeName="stroke-dashoffset" from="0" to="-22" dur="1.2s" repeatCount="indefinite"/></path>
+<g class="key"><rect x="102" y="82" width="120" height="80" rx="14" fill="#1C1917" stroke="#2A2522" stroke-width="2"/><rect x="108" y="86" width="108" height="64" rx="11" fill="#24201D"/><text class="mono" x="162" y="132" text-anchor="middle" fill="#F3ECE2" font-size="30" font-weight="700">⌥ R</text></g>
+<rect x="102" y="162" width="120" height="4" rx="2" fill="#0A0908"/>
+<rect x="303" y="82" width="196" height="80" rx="12" fill="#161311" stroke="#2A2522" stroke-width="1.5"/>
+<text class="mono" x="401.0" y="118" text-anchor="middle" fill="#F3ECE2" font-size="24" font-weight="700">capture</text>
+<text class="mono" x="401.0" y="145" text-anchor="middle" fill="#8A837A" font-size="14">1 fps screen + mic</text>
+<text class="mono" x="401.0" y="192" text-anchor="middle" fill="#5E8F5A" font-size="14" letter-spacing="2.5">LOCAL</text>
+<rect x="542" y="82" width="196" height="80" rx="12" fill="#161311" stroke="#2A2522" stroke-width="1.5"/>
+<text class="mono" x="640.0" y="118" text-anchor="middle" fill="#F3ECE2" font-size="24" font-weight="700">whisper</text>
+<text class="mono" x="640.0" y="145" text-anchor="middle" fill="#8A837A" font-size="14">transcript, on device</text>
+<text class="mono" x="640.0" y="192" text-anchor="middle" fill="#5E8F5A" font-size="14" letter-spacing="2.5">LOCAL</text>
+<rect x="781" y="82" width="196" height="80" rx="12" fill="#161311" stroke="#E5322D" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text class="mono" x="879.0" y="118" text-anchor="middle" fill="#F3ECE2" font-size="21" font-weight="700">$RECORD_AI</text>
+<text class="mono" x="879.0" y="145" text-anchor="middle" fill="#8A837A" font-size="14">title · tags · summary</text>
+<text class="mono" x="879.0" y="192" text-anchor="middle" fill="#E5322D" font-size="14" letter-spacing="2.5">OPTIONAL</text>
+<rect x="1020" y="82" width="196" height="80" rx="12" fill="#161311" stroke="#2A2522" stroke-width="1.5"/>
+<text class="mono" x="1118.0" y="118" text-anchor="middle" fill="#F3ECE2" font-size="24" font-weight="700">note.md</text>
+<text class="mono" x="1118.0" y="145" text-anchor="middle" fill="#8A837A" font-size="14">filed in your vault</text>
+<text class="mono" x="1118.0" y="192" text-anchor="middle" fill="#5E8F5A" font-size="14" letter-spacing="2.5">LOCAL</text>
+<circle r="4.5" fill="#E5322D"><animateMotion dur="4.5s" begin="0s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".4 0 .2 1" path="M 222 122 H 1020"/></circle><circle r="9.9" fill="#E5322D" opacity=".16"><animateMotion dur="4.5s" begin="0s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".4 0 .2 1" path="M 222 122 H 1020"/></circle>
+<circle r="3.5" fill="#8A837A"><animateMotion dur="4.5s" begin="2.6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".4 0 .2 1" path="M738 122 C798 122 808 62 879 62 S960 122 1020 122"/></circle><circle r="7.700000000000001" fill="#8A837A" opacity=".16"><animateMotion dur="4.5s" begin="2.6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines=".4 0 .2 1" path="M738 122 C798 122 808 62 879 62 S960 122 1020 122"/></circle>
+<text class="mono" x="64" y="238" text-anchor="start" fill="#3A3430" font-size="13" letter-spacing="2.5">ONE MP4 PER HOUR · NOTHING RUNS UNTIL YOU PRESS IT</text>
+<text class="mono" x="1216" y="238" text-anchor="end" fill="#3A3430" font-size="13" letter-spacing="2.5">THE GREY DOT IS RECORD_AI=0</text>
+</svg>

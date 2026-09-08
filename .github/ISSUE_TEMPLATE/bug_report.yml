@@ -38,7 +38,7 @@ body:
         The shortest sequence that triggers it, including whether a call, an external display, or a sleep or wake cycle was involved.
 
         Then add, in the same box, whichever of these is relevant to the failure. Do not go and collect them all:
-        chip (`uname -m`), ffmpeg version (`ffmpeg -version`, first line), whisper-cpp version (`brew list --versions whisper-cpp`), whether BlackHole 2ch is installed (`brew list --cask blackhole-2ch`), whether the `claude` CLI is signed in, whether you triggered it with Option+R or by running `record` in a terminal, and any non-default values in `~/.config/record/config` (with your vault path replaced by a placeholder).
+        chip (`uname -m`), ffmpeg version (`ffmpeg -version`, first line), whisper-cpp version (`brew list --versions whisper-cpp`), whether BlackHole 2ch is installed (`brew list --cask blackhole-2ch`), which AI CLI `RECORD_AI` names and whether it is signed in, whether you triggered it with Option+R or by running `record` in a terminal, and any non-default values in `~/.config/record/config` (with your vault path replaced by a placeholder).
     validations:
       required: true
 

@@ -6,17 +6,19 @@ Read this before you run it near anyone else.
 
 ## It can run with zero egress
 
-Exactly one component ever leaves the machine, the optional `claude` CLI, and
-one line in `~/.config/record/config` removes it:
+Exactly one component ever leaves the machine, the optional AI CLI named by
+`RECORD_AI` (`claude`, `cursor` or `copilot`), and one line in
+`~/.config/record/config` removes it:
 
 ```bash
-RECORD_CLAUDE=0
+RECORD_AI=0
 ```
 
 With that set, `record` makes no network request at all. It never invokes
-`claude`, and it does not even extract the JPEG frames that call would have
-read, so no still of your screen is written anywhere, not even to the scratch
-directory. ffmpeg still captures and whisper.cpp still transcribes, both
+any of the three, and it does not even extract the JPEG frames that call would
+have read, so no still of your screen is written anywhere, not even to the
+scratch directory. `RECORD_CLAUDE=0`, the switch's name in earlier releases,
+still means the same thing. ffmpeg still captures and whisper.cpp still transcribes, both
 locally, and the note is still written with the complete transcript. What you
 give up is the title, the tags, the summary and the description of what was on
 screen; the note says so in place of the summary, so a reader is never left
@@ -101,7 +103,7 @@ you assume you are private.
 | State | `$RECORD_DIR/.record.pid`, `.dot.pid`, `.session`, `.lock` (a directory), `.previous-output`, `.record.log`, `.transcribe.log` | process state, ffmpeg errors, the name of your previous audio output device |
 | Whisper model | `$RECORD_DIR/.whisper/` | about 574 MB, not sensitive |
 | Note | `$RECORD_NOTES` (default `~/Documents/Obsidian/Recordings`) | full plaintext transcript, the model's description of the screen, and absolute paths to the mp4 files |
-| Temporary | one scratch directory per `record transcribe` run, `mktemp -d` under `$TMPDIR` | the 16 kHz wav and, unless `RECORD_CLAUDE` is off, the downscaled JPEG frames of the video being read, one video at a time. An `EXIT` trap removes the directory on every path out, a failed ffmpeg or whisper included |
+| Temporary | one scratch directory per `record transcribe` run, `mktemp -d` under `$TMPDIR` | the 16 kHz wav and, unless `RECORD_AI` is off, the downscaled JPEG frames of the video being read, one video at a time. An `EXIT` trap removes the directory on every path out, a failed ffmpeg or whisper included |
 
 Nothing is encrypted by this tool. FileVault, if it is on, encrypts the disk
 while the Mac is off or logged out, and that is the whole of it: once you log
@@ -135,39 +137,52 @@ it actually wrote the file. A note filed outside a vault is loud, not lost.
 ## The one egress, and the one line that removes it
 
 Every other component runs locally and touches no network. ffmpeg captures,
-whisper.cpp transcribes on your machine. The `claude` CLI is the single
-exception, and with `RECORD_CLAUDE` on, which is the default, `record
-transcribe` calls it in two ways:
+whisper.cpp transcribes on your machine. The AI CLI is the single exception,
+and with `RECORD_AI` set to one of `claude`, `cursor` or `copilot` (`claude`
+is the default), `record transcribe` calls it in two ways:
 
-1. Once per video file, with the Sonnet model and the `Read` tool enabled,
-   given the paths of the frames extracted from that file (JPEG scaled to
-   1400 px wide, 8 to 30 of them spread over the hour). It reads and describes
-   them, so those images leave the machine.
-2. Once for the whole session, with the Haiku model, given the first 30000
-   bytes of the transcript and the screen description, to produce a title,
-   tags and a summary. That text leaves the machine.
+1. Once per video file, with the vision model (`RECORD_AI_VISION_MODEL`),
+   given the frames extracted from that file (JPEG scaled to 1400 px wide, 8
+   to 30 of them spread over the hour). It reads and describes them, so those
+   images leave the machine. How they get there depends on the CLI: `claude`
+   is given their paths and its `Read` tool, `cursor-agent` opens them itself
+   in read-only ask mode inside a workspace that is the scratch directory and
+   nothing else, `copilot` receives them as attachments with every tool
+   switched off.
+2. Once for the whole session, with the metadata model (`RECORD_AI_META_MODEL`),
+   given the first 30000 bytes of the transcript and the screen description,
+   to produce a title, tags and a summary. That text leaves the machine.
 
 So the content of your screen at sampled instants, and what was said in the
-room, are transmitted to Anthropic and processed under whatever plan the CLI
-is authenticated with. Retention and training behaviour are governed by that
-account's terms, not by anything in this repository. This is also the only
-component that is not free: it needs a paid Anthropic subscription or API
-credit. Everything else, the capture and the transcription included, runs
-here and costs nothing.
+room, are transmitted to that CLI's vendor, Anthropic, Cursor or GitHub, and
+onward to whichever model provider the vendor routes the chosen model to, and
+processed under whatever plan the CLI is authenticated with. Retention and
+training behaviour are governed by that account's terms, not by anything in
+this repository. This is also the only component that is not free: it needs
+that vendor's paid subscription or credit. Everything else, the capture and
+the transcription included, runs here and costs nothing.
+
+The default models are `sonnet` and `haiku` on `claude`, `cursor-grok-4.6-high`
+on `cursor`, `gemini-3.8-flash` on `copilot`. A model the CLI does not carry
+makes the call fail, and the note says so rather than falling back to another
+model silently: you should always be able to tell from the note what was sent
+where.
 
 Frame sampling is spread across the whole recording, so a call in which other
 people's video tiles or shared documents were on screen sends those images too.
 
-**Turning it off.** `RECORD_CLAUDE=0`, described at the top of this file, skips
+**Turning it off.** `RECORD_AI=0`, described at the top of this file, skips
 both calls and the frame extraction that feeds the first one. That is the
 supported off switch and the one to use.
 
 **If you never install it at all,** the result is nearly the same but not
-identical: both calls swallow their errors, so a missing or unauthorised
-`claude` leaves the pipeline completing with the title `Recorded session`, the
-tag `recording`, no summary and no screen section. The difference is that the
-frames are still extracted to the scratch directory before the call fails, and
-the note does not say why the summary is missing. Prefer the config line.
+identical: the pipeline completes with the title `Recorded session`, the tag
+`recording`, no summary and no screen section, and the note says the CLI is
+not installed. A CLI that is installed but not signed in, out of credit or
+asked for a model it does not have leaves the same note, with a line pointing
+at `.transcribe.log`, where the CLI's own error is kept. In both cases the
+frames are still extracted to the scratch directory before the call fails.
+Prefer the config line.
 
 ## Retention
 
@@ -250,7 +265,8 @@ bounty. If a problem is urgent for you, stop the tool and delete the
 recordings rather than waiting for a patch.
 
 Scope is the code in this repository. ffmpeg, whisper.cpp, skhd, BlackHole,
-the `claude` CLI and whatever app you point `RECORD_LAUNCH_APP` at are
+the `claude`, `cursor-agent` and `copilot` CLIs and whatever app you point
+`RECORD_LAUNCH_APP` at are
 upstream projects with their own reporting channels, and issues in them should
 go there. Reports about how this repository uses them unsafely are in scope and
 welcome.

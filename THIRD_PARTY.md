@@ -21,7 +21,9 @@ if Handy is not installed.
 | [BlackHole](https://github.com/ExistentialAudio/BlackHole) | optional loopback for the other side of a call | GPL-3.0 for source. Official binaries and the BlackHole name are copyright Existential Audio Inc. | `brew install --cask blackhole-2ch`, only with `--with-blackhole` |
 | [Handy](https://github.com/cjpais/handy) | optional push-to-talk dictation, unrelated to capture | MIT, CJ Pais | `brew install --cask handy`, only with `--with-handy` |
 
-The `claude` CLI is optional, proprietary (Anthropic) and not open source.
-`RECORD_CLAUDE=0` turns it off.
+The AI CLI named by `RECORD_AI` is optional and proprietary: `claude`
+(Anthropic), `cursor-agent` (Cursor) or `copilot` (GitHub). None of them is
+open source, none is installed by this project, and `RECORD_AI=0` turns the
+call off.
 
 This project's own code is MIT, see [LICENSE](LICENSE).

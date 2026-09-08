@@ -145,6 +145,45 @@ else
 fi
 EOF
 
+  # The two other CLIs record can drive. Same refusal guard, and every call
+  # appends its full argument list to $RECORD_TEST_ARGV when the test sets
+  # one, so a test can assert on the exact flags record passed: the model, the
+  # read-only mode, one --attachment per frame. Which of the two answers a
+  # call wants is read off the prompt itself: the metadata prompt is the only
+  # one that spells out the TITLE: line it expects back.
+  for cli in cursor-agent copilot; do
+    cat > "$bin/$cli" <<'EOF'
+#!/bin/bash
+# Stub AI CLI: the real one uploads the transcript and screen frames to its
+# vendor and charges the user's plan. A test that reaches it has failed.
+set -euo pipefail
+for a in "$@"; do
+  case "$a" in
+    "$RECORD_TEST_REAL_HOME"|"$RECORD_TEST_REAL_HOME"/*)
+      echo "stub $(basename "$0"): refusing an argument inside the real HOME: $a" >&2
+      exit 90 ;;
+  esac
+done
+if [ -n "${RECORD_TEST_ARGV:-}" ]; then
+  { printf -- '--- %s\n' "$(basename "$0")"; printf '%s\n' "$@"; } >> "$RECORD_TEST_ARGV"
+fi
+# A stub told to fail behaves like a CLI asked for a model it does not have:
+# one line on stderr, nothing on stdout, exit 1.
+if [ -n "${RECORD_TEST_AI_FAIL:-}" ]; then
+  echo "error: unknown model: $RECORD_TEST_AI_FAIL" >&2
+  exit 1
+fi
+if printf '%s\n' "$@" | grep -q '^TITLE:'; then
+  printf 'TITLE: Stub session\n'
+  printf 'TAGS: stub test\n'
+  printf 'SUMMARY: A stubbed session written by the test suite. Nothing was transcribed.\n'
+else
+  # Longer than the 60 characters record needs before it keeps a description.
+  printf 'The frames showed a stubbed listing written by the test suite, with no readable text of its own to copy.\n'
+fi
+EOF
+  done
+
   cat > "$bin/osascript" <<'EOF'
 #!/bin/bash
 # Stub osascript: record's notify() posts a Notification Centre banner, and a
@@ -153,7 +192,8 @@ set -euo pipefail
 exit 0
 EOF
 
-  chmod +x "$bin/ffmpeg" "$bin/ffprobe" "$bin/whisper-cli" "$bin/claude" "$bin/osascript"
+  chmod +x "$bin/ffmpeg" "$bin/ffprobe" "$bin/whisper-cli" "$bin/claude" \
+    "$bin/cursor-agent" "$bin/copilot" "$bin/osascript"
 }
 
 # A directory that looks like somewhere record can transcribe from: the whisper
@@ -173,7 +213,9 @@ seed_recordings() {
 # Run `record transcribe` against a sandbox. env -i is the point: none of the
 # caller's RECORD_* variables, and none of the real config file, can reach it.
 #   $1 repo root, $2 sandbox HOME, $3 stub bin, $4 TMPDIR,
-#   $5 RECORD_DIR, $6 RECORD_VAULT, $7 RECORD_NOTES
+#   $5 RECORD_DIR, $6 RECORD_VAULT, $7 RECORD_NOTES,
+#   then any number of NAME=value pairs the test wants record to see, the
+#   RECORD_AI family and the stubs' own RECORD_TEST_* knobs included.
 run_transcribe() {
   env -i \
     PATH="$3:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -184,5 +226,6 @@ run_transcribe() {
     RECORD_DIR="$5" \
     RECORD_VAULT="$6" \
     RECORD_NOTES="$7" \
+    "${@:8}" \
     bash "$1/record" transcribe 2>&1
 }
