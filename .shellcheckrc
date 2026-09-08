@@ -1,0 +1,16 @@
+# ShellCheck settings for this repo. One line, one reason in this code.
+
+# record, install.sh and the tests source record-lib.sh through a path built at
+# run time ("$HERE/record-lib.sh", "$ROOT/record-lib.sh"), so the
+# `# shellcheck source=` directives only resolve when paths are read relative
+# to the script being checked. With these two, ShellCheck follows the library
+# for real instead of reporting SC1091 that nobody can act on.
+source-path=SCRIPTDIR
+external-sources=true
+
+# install.sh appends the literal line export PATH="$HOME/bin:$PATH" to
+# ~/.zshrc, scripts/uninstall.sh matches that same literal, and
+# test/uninstall_safety.test.sh writes both that line and a config file into
+# its sandbox. $HOME must stay unexpanded in all three, so the single quotes
+# SC2016 objects to are the point.
+disable=SC2016

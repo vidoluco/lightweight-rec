@@ -1,0 +1,38 @@
+# macOS noise
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# compiled Swift helpers: the sources are record-dot.swift and record-audio.swift,
+# the binaries belong in ~/bin and are rebuilt by install.sh
+/record-dot
+/record-audio
+*.o
+*.dSYM/
+build/
+.build/
+
+# state a local run drops beside the videos, in case RECORD_DIR ever points here
+.record.pid
+.record.log
+.transcribe.log
+.session
+.dot.pid
+.previous-output
+.lock/
+
+# the whisper model is 574 MB and is downloaded, never committed
+.whisper/
+*.bin
+
+# safety net: no recording, and nothing cut out of one, is ever committed
+*.mp4
+*.mov
+*.wav

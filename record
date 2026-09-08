@@ -1,16 +1,25 @@
 #!/bin/bash
-# record — continuous local screen+mic recording, free, no subscription.
+# record: continuous screen and microphone recording, one hotkey, no daemon.
 #
-#   record          start Handy and recording (1 fps screen + microphone)
+#   record          start recording (1 fps screen + microphone)
 #   record stop     stop, transcribe audio, file a note in the Obsidian vault
 #   record status   running or not, and how much disk the videos use
 #   record toggle   start if idle, stop if running: this is Option+R (skhd)
 #   record screens  list displays; the red dot is what you are recording
 #
+# What runs where: capture (ffmpeg), the red dot overlay and the transcription
+# (whisper.cpp) all run on this Mac, offline and at no cost. One thing does
+# not: the optional `claude` CLI, which sends the transcript and a few screen
+# frames to Anthropic and needs a paid Anthropic plan (subscription or API
+# credit). It is not required, and RECORD_CLAUDE=0 turns it off for good.
+# Without it the note is still written, minus the title, the tags, the summary
+# and the screen description.
+#
 # How it stays small:
 #   - screen at 1 frame per second, hardware HEVC at a low bitrate (~110 MB/hour)
 #   - one file per hour, so a crash loses at most an hour
-#   - every start deletes videos older than 14 days: the disk settles on a buffer
+#   - every start deletes its own videos older than RECORD_DAYS (14 by default),
+#     so the disk settles on a rolling buffer
 #   - the Obsidian vault gets TEXT only: videos stay out of iCloud
 #
 # WARNING: the microphone runs the whole time. In a call you are recording
@@ -39,14 +48,24 @@ NOTES="${RECORD_NOTES:-$VAULT/Recordings}"
 DOT="${RECORD_DOT:-$HOME/bin/record-dot}"
 AUDIO_HELPER="${RECORD_AUDIO:-$HOME/bin/record-audio}"
 SCREEN="${RECORD_SCREEN:-0}"    # ffmpeg "Capture screen N"; red dot follows this
-DAYS=14
+MIC="${RECORD_MIC:-}"           # empty: resolve the input device on every start
+# The two switches that are on unless the user says otherwise. Read once here
+# so the defaults live in one place, and compared with is_off, which only
+# accepts a deliberate 0/no/off/false.
+CLAUDE_ON="${RECORD_CLAUDE:-1}"          # off: never call the claude CLI at all
+SYSTEM_AUDIO="${RECORD_SYSTEM_AUDIO:-1}" # off: no BlackHole aggregate, RECORD_MIC wins
+LAUNCH_APP="${RECORD_LAUNCH_APP:-}"   # empty: this tool opens no other app
+DAYS="${RECORD_DAYS:-14}"       # mp4 files older than this are deleted on start
 MIN_SECS=20      # a toggle this young cannot stop: it is a double tap
 FRAME_MIN=8      # frames read per video, even on very short clips
 FRAME_MAX=30     # cap: more frames cost and add nothing
 LOCK_STALE=120   # a .lock older than this is leftover, not a live start
 DOTPID="$DIR/.dot.pid"
 
-mkdir -p "$DIR"
+# The only files this tool may delete. RECORD_DIR can point anywhere, so the
+# cleanup matches the exact shape ffmpeg writes (-strftime %Y-%m-%d_%H-%M.mp4)
+# and never a stranger's archive that happens to live in the same folder.
+CLIPS='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9].mp4'
 
 running() {
   # the pidfile is not enough: two Option+R in a row can start a second ffmpeg
@@ -57,7 +76,12 @@ running() {
 
 # Option+R has no terminal: confirmation goes through here
 notify() {
-  osascript -e "display notification \"$1\" with title \"record\"" 2>/dev/null || true
+  # A double quote or a backslash in the message would close the AppleScript
+  # string early and the notification would never appear. These messages carry
+  # paths and device names now, so strip both: this is prose, not data.
+  local msg
+  msg=$(printf '%s' "$1" | tr -d '\\"')
+  osascript -e "display notification \"$msg\" with title \"record\"" 2>/dev/null || true
 }
 
 screen_label() {
@@ -81,6 +105,18 @@ hide_dot() {
     rm -f "$DOTPID"
   fi
   pkill -f "record-dot on" 2>/dev/null || true
+}
+
+# Sound has to come back even when the take never really started: a start that
+# died between "switch output to Record-Out" and "ffmpeg is up" leaves the Mac
+# playing into an aggregate nobody listens to, and only a stop can undo it.
+restore_audio() {
+  if [ -f "$DIR/.previous-output" ]; then
+    switchaudiosource -s "$(cat "$DIR/.previous-output")" -t output >/dev/null 2>&1 || true
+    rm -f "$DIR/.previous-output"
+  fi
+  [ -x "$AUDIO_HELPER" ] && { "$AUDIO_HELPER" down >/dev/null 2>&1 || true; }
+  return 0
 }
 
 cmd="${1:-start}"
@@ -133,7 +169,7 @@ case "$cmd" in
       if [ -z "$pid_ff" ] || ! kill -0 "$pid_ff" 2>/dev/null; then
         pid_ff=$(pgrep -f "avfoundation.*$DIR" | head -1)
       fi
-      [ -n "$pid_ff" ] || { echo "Cannot find the recording process."; rm -f "$PIDFILE"; hide_dot; exit 1; }
+      [ -n "$pid_ff" ] || { echo "Cannot find the recording process."; rm -f "$PIDFILE"; hide_dot; restore_audio; exit 1; }
       kill -INT "$pid_ff"
       # wait until ffmpeg actually writes the moov atom, not a guessed sleep:
       # a long file can take more than 2 seconds and the video stays broken
@@ -144,11 +180,7 @@ case "$cmd" in
       kill -0 "$pid_ff" 2>/dev/null && { sleep 2; kill -9 "$pid_ff" 2>/dev/null || true; }
       rm -f "$PIDFILE"
       hide_dot
-      if [ -f "$DIR/.previous-output" ]; then
-        switchaudiosource -s "$(cat "$DIR/.previous-output")" -t output >/dev/null 2>&1 || true
-        rm -f "$DIR/.previous-output"
-      fi
-      "$AUDIO_HELPER" down 2>/dev/null || true
+      restore_audio
       echo "Recording stopped. Files are in $DIR"
       nohup "$0" transcribe >"$DIR/.transcribe.log" 2>&1 &
       echo "Transcribing in the background: the note will appear in the vault, Recordings/"
@@ -157,6 +189,7 @@ case "$cmd" in
       echo "Not recording."
       rm -f "$PIDFILE"
       hide_dot
+      restore_audio
     fi
     ;;
 
@@ -168,7 +201,17 @@ case "$cmd" in
     else
       echo "Idle."
     fi
-    echo "Video disk: $(find "$DIR" -maxdepth 1 -name '*.mp4' -exec du -ch {} + 2>/dev/null | tail -1 | cut -f1)  ($(find "$DIR" -maxdepth 1 -name '*.mp4' | wc -l | tr -d ' ') files)"
+    if [ -d "$DIR" ]; then
+      n_clips=$(find "$DIR" -maxdepth 1 -name "$CLIPS" | wc -l | tr -d ' ')
+      if [ "$n_clips" -gt 0 ]; then
+        size=$(find "$DIR" -maxdepth 1 -name "$CLIPS" -exec du -ch {} + 2>/dev/null | tail -1 | cut -f1)
+        echo "Video disk: ${size:-unknown}  ($n_clips files)"
+      else
+        echo "Video disk: no recording yet in $DIR"
+      fi
+    else
+      echo "Video disk: $DIR does not exist yet; it is created on the first start."
+    fi
     ;;
 
   screens)
@@ -187,7 +230,9 @@ case "$cmd" in
       done
     else
       echo "record-dot is not installed; ffmpeg devices:"
-      echo "$LIST" | grep 'Capture screen'
+      # same set -e trap as the start branch: without the fallback, a broken
+      # ffmpeg makes `record screens` swallow its own closing hints.
+      echo "$LIST" | grep 'Capture screen' || echo "  (none: ffmpeg listed no capture screen)"
     fi
     echo
     echo "To record the other display: RECORD_SCREEN=1 record toggle"
@@ -198,17 +243,63 @@ case "$cmd" in
     [ -f "$MODEL" ] || { echo "Whisper model missing at $MODEL"; exit 1; }
     [ -f "$SESSION" ] || { echo "No session to transcribe."; exit 0; }
 
-    FILES=$(find "$DIR" -name '*.mp4' -newer "$SESSION" | sort)
-    [ -n "$FILES" ] || { echo "No new video."; exit 0; }
+    # NUL-delimited into an array, never a bare string walked with `for f in
+    # $FILES`. That word split on every space, so a RECORD_DIR whose name has
+    # one ("~/My Recordings") turned two files into four bogus paths, ffmpeg
+    # failed on the first of them and set -e killed the whole background run:
+    # no note, no error anywhere the user looks, only .transcribe.log.
+    FILES=()
+    while IFS= read -r -d '' f; do
+      FILES+=("$f")
+    done < <(find "$DIR" -maxdepth 1 -name "$CLIPS" -newer "$SESSION" -print0 | sort -z)
+    [ "${#FILES[@]}" -gt 0 ] || { echo "No new video."; exit 0; }
+
+    if is_off "$CLAUDE_ON"; then
+      echo "RECORD_CLAUDE is off: no claude call. The note gets the full"
+      echo "transcript, a generic title and no screen description."
+    fi
+
+    # One scratch directory for the whole run, removed on every exit path,
+    # including a failed ffmpeg under set -e. The old `mktemp -t record`.wav
+    # left an empty stub in TMPDIR for every mp4 ever transcribed: mktemp
+    # created one path and the .wav suffix made the real file a different one.
+    WORK=$(mktemp -d -t record-work)
+    trap 'rm -rf "$WORK"' EXIT
 
     TEXT=""
     VISUAL=""
-    for f in $FILES; do
-      wav=$(mktemp -t record).wav
-      ffmpeg -y -hide_banner -loglevel error -i "$f" -ar 16000 -ac 1 "$wav"
-      # -l auto: meetings mix Italian, English and Romanian.
+    SKIPPED=""
+    for f in "${FILES[@]}"; do
+      wav="$WORK/audio.wav"
+      rm -f "$wav"
+      # One unreadable segment must never cost the whole day. A forced
+      # shutdown or a dead battery leaves the last mp4 without its moov atom,
+      # and that is precisely the case the README promises still works. Under
+      # set -e an unguarded ffmpeg here aborted the background run on that
+      # file, threw away every hour already transcribed, wrote no note at all,
+      # and left one "moov atom not found" line in a log nobody opens.
+      if ! ffmpeg -y -hide_banner -loglevel error -i "$f" -ar 16000 -ac 1 "$wav" 2>&1; then
+        echo "Skipped $(basename "$f"): could not be decoded, probably an interrupted segment."
+        SKIPPED="$SKIPPED
+- \`$f\` (unreadable, probably interrupted)"
+        rm -f "$wav"
+        continue
+      fi
+      # -l auto: a meeting can switch language mid sentence, and forcing one
+      # language mistranscribes everything said in the other.
       # timestamps stay: they are the correlation with the video.
-      chunk=$(whisper-cli -m "$MODEL" -f "$wav" -l auto -np 2>/dev/null)
+      # Guarded like the ffmpeg call above, and for the same reason. `|| true`
+      # was worse than no guard: it produced a heading with nothing under it,
+      # discarded the error, left the file out of SKIPPED, and let the note
+      # claim the transcript was complete. An hour lost that way is
+      # indistinguishable from an hour in which nobody spoke.
+      if ! chunk=$(whisper-cli -m "$MODEL" -f "$wav" -l auto -np 2>&1); then
+        echo "Skipped $(basename "$f"): whisper-cli failed to transcribe it."
+        SKIPPED="$SKIPPED
+- \`$f\` (transcription failed)"
+        rm -f "$wav"
+        continue
+      fi
       rm -f "$wav"
       TEXT="$TEXT
 ## $(basename "$f" .mp4 | tr '_' ' ')
@@ -219,11 +310,18 @@ $chunk
       # dashboard, audio alone does not say what was on screen.
       # frames are spread over the whole duration, not on scene cuts: in a
       # call the webcams change constantly and would bias the first seconds.
+      # All of it exists only to feed the claude CLI, so RECORD_CLAUDE=0 skips
+      # the extraction too rather than writing JPEGs nobody will read.
+      if is_off "$CLAUDE_ON"; then
+        continue
+      fi
       duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" 2>/dev/null || echo 0)
       n_frame=$(awk -v d="$duration" -v lo="$FRAME_MIN" -v hi="$FRAME_MAX" \
         'BEGIN{ if(d<=0){print lo; exit} n=int(d/25+0.5); if(n<lo)n=lo; if(n>hi)n=hi; print n }')
       fps=$(awk -v d="$duration" -v n="$n_frame" 'BEGIN{ if(d<=0)d=1; printf "%.6f", n/d }')
-      frames=$(mktemp -d -t record-frame)
+      frames="$WORK/frames"
+      rm -rf "$frames"
+      mkdir -p "$frames"
       ffmpeg -y -hide_banner -loglevel error -i "$f" \
         -vf "fps=$fps,scale=1400:-1" -q:v 4 "$frames/k%03d.jpg" 2>/dev/null || true
 
@@ -241,7 +339,7 @@ Write in English what the screen showed. Hard rules:
 - If text is blurry, say it is unreadable. NEVER invent a number, a name, or a URL.
 - If the screen barely changes, say so in one line and list only the instants where something changes.
 - Anchor every observation to the frame timestamp.
-- No long dashes. At most 15 lines." --model sonnet --allowedTools Read 2>/dev/null || true)
+- At most 15 lines." --model sonnet --allowedTools Read 2>/dev/null || true)
         if echo "$descr" | grep -qiE "not logged in|please run /login|invalid api key|credit balance|usage limit"; then
           echo "Screen read skipped: claude did not answer ($(echo "$descr" | head -1))" >&2
           descr=""
@@ -260,18 +358,32 @@ $descr
 
     # title, tags, summary from content. If claude does not answer, the note
     # is still written, raw.
-    META=$(printf '%s\n\n=== WHAT WAS ON SCREEN ===\n%s\n' "$TEXT" "$VISUAL" \
-      | head -c 30000 | claude -p --model haiku \
-      "This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
+    # The one call that costs money per session. Off means no call and an
+    # empty META, which is exactly the shape a failed call already produced:
+    # the fallbacks below fill in a generic title and the note is written.
+    META=""
+    if ! is_off "$CLAUDE_ON"; then
+      META=$(printf '%s\n\n=== WHAT WAS ON SCREEN ===\n%s\n' "$TEXT" "$VISUAL" \
+        | head -c 30000 | claude -p --model haiku \
+        "This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
 TITLE: <max 6 words, in English, specific to the content>
 TAGS: <2-4 short kebab-case tags separated by space, e.g. meeting standup planning>
 SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
+    fi
 
     TITLE=$(echo "$META" | sed -n 's/^TITLE: *//p' | head -1)
     TAGS=$(echo "$META"   | sed -n 's/^TAGS: *//p'    | head -1)
     SUMMARY=$(echo "$META" | sed -n 's/^SUMMARY: *//p' | head -1)
     [ -n "$TITLE" ] || TITLE="Recorded session"
     [ -n "$TAGS" ]   || TAGS="recording"
+
+    # A note filed outside a vault is a note nobody ever opens, and until now
+    # nothing checked: on a machine with no Obsidian at all this happily did
+    # mkdir -p on the default ~/Documents/Obsidian/Recordings and reported
+    # success. Every real vault has a .obsidian directory at its root, so walk
+    # up from the notes folder and look for one. The note is written either
+    # way, the transcription is never thrown away, but a miss is said out loud.
+    VAULT_ROOT=$(vault_root "$NOTES")
 
     mkdir -p "$NOTES"
     NOTE="$NOTES/$STAMP $(echo "$TITLE" | tr -d '/:').md"
@@ -285,8 +397,26 @@ SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
       echo "# $TITLE"
       echo
       [ -n "$SUMMARY" ] && { echo "$SUMMARY"; echo; }
+      # Both reasons get said. An absent claude used to produce a note
+      # identical to a deliberate RECORD_CLAUDE=0, with the error swallowed by
+      # 2>/dev/null, so the reader had no way to tell a choice from a fault.
+      if is_off "$CLAUDE_ON"; then
+        echo "*No title, tags, summary or screen description: RECORD_CLAUDE is off.*"
+        echo "*The transcript below is what was said.*"
+        echo
+      elif ! command -v claude >/dev/null 2>&1; then
+        echo "*No title, tags, summary or screen description: the \`claude\` CLI*"
+        echo "*is not installed. The transcript below is what was said.*"
+        echo
+      fi
       echo "**Video** (on the Mac, deleted after $DAYS days):"
-      for f in $FILES; do echo "- \`$f\`"; done
+      for f in "${FILES[@]}"; do echo "- \`$f\`"; done
+      if [ -n "$SKIPPED" ]; then
+        echo
+        echo "**Not transcribed** (the file could not be decoded, so this part"
+        echo "of the session is missing from the transcript below):"
+        echo "$SKIPPED"
+      fi
       echo
       echo "*Timestamps in the transcript are relative to the matching hour's video:*"
       echo "*each section below is named after its file.*"
@@ -302,9 +432,23 @@ SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
 
     rm -f "$SESSION"
     echo "Note created: $NOTE"
+    if [ -z "$VAULT_ROOT" ]; then
+      echo
+      echo "WARNING: that folder is not inside an Obsidian vault. There is no"
+      echo ".obsidian directory above it, so Obsidian will never list this note"
+      echo "and you will not find it where the README says it goes."
+      echo "Written to:  $NOTES"
+      echo "To fix it:   set RECORD_VAULT to your vault root in $CONFIG"
+      echo "             (or RECORD_NOTES to a folder inside the vault)."
+      echo "Nothing was lost: the note above is complete, move it when you like."
+      notify "Note filed OUTSIDE any Obsidian vault, in $NOTES. Set RECORD_VAULT in $CONFIG."
+    fi
     ;;
 
   start)
+    # only a real start creates the directory: status and the usage error must
+    # not litter a machine that has never recorded anything.
+    mkdir -p "$DIR"
     if ! mkdir "$DIR/.lock" 2>/dev/null; then
       echo "A start is already in progress."
       exit 0
@@ -316,9 +460,9 @@ SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
       exit 0
     fi
 
-    found=$(find "$DIR" -name '*.mp4' -mtime +"$DAYS" | wc -l | tr -d ' ')
+    found=$(find "$DIR" -maxdepth 1 -name "$CLIPS" -mtime +"$DAYS" | wc -l | tr -d ' ')
     if [ "$found" -gt 0 ]; then
-      find "$DIR" -name '*.mp4' -mtime +"$DAYS" -delete
+      find "$DIR" -maxdepth 1 -name "$CLIPS" -mtime +"$DAYS" -delete
       echo "Cleanup: deleted $found videos older than $DAYS days."
     fi
 
@@ -327,30 +471,85 @@ SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
     # captures the other voices too, AirPods or not. Current output is read
     # now, not configured in advance: AirPods at the office, speakers at home.
     # Without BlackHole it degrades to microphone only.
-    INGRESS="MacBook Pro Microphone"
+    # The log belongs to this start and nothing else: truncated here, appended
+    # to from here on, so `tail` after a failure never shows a previous run.
+    : > "$DIR/.record.log"
+
+    INGRESS="$MIC"
     FILTER=(-ac 1)
-    if PREV=$("$AUDIO_HELPER" up 2>/dev/null) && [ -n "$PREV" ]; then
+    if is_off "$SYSTEM_AUDIO"; then
+      echo "System audio is off (RECORD_SYSTEM_AUDIO): recording the microphone only."
+    # RECORD_MIC has to be EXPORTED to reach record-audio. It arrives here
+    # from `. "$CONFIG"` as a plain shell variable, so a bare call left the
+    # helper with an empty environment and it built Record-In on CoreAudio's
+    # default input instead of the device the user named, silently.
+    elif PREV=$(RECORD_MIC="$MIC" "$AUDIO_HELPER" up 2>/dev/null) && [ -n "$PREV" ]; then
       echo "$PREV" > "$DIR/.previous-output"
       switchaudiosource -s "Record-Out" -t output >/dev/null 2>&1 || true
       INGRESS="Record-In"
       # aggregate channels: 0 = mic, 1-2 = system audio via BlackHole
       FILTER=(-filter:a "pan=mono|c0=c0+0.5*c1+0.5*c2")
-      echo "Full audio: microphone + system audio (previous output: $PREV)"
+      # Say which microphone is inside the aggregate rather than leaving the
+      # user to guess: "Record-In" names the wrapper, not the device, and the
+      # whole point of RECORD_MIC is knowing that it took effect. `which` is
+      # read-only, it resolves the same way `up` just did and touches nothing.
+      # The fallback sits OUTSIDE the substitution on purpose. Inside it, the
+      # helper's exit status is discarded and only its stdout survives, so an
+      # older record-audio without `which` printed its usage line to stdout,
+      # exited 1, and the start line read "Full audio: Usage: record-audio
+      # up|down + system audio". Guarding on the status covers every failure.
+      IN_MIC=$(RECORD_MIC="$MIC" "$AUDIO_HELPER" which 2>/dev/null) || IN_MIC=""
+      echo "Full audio: ${IN_MIC:-microphone} + system audio (previous output: $PREV)"
     fi
 
     # device indices change (iPhone plugged in, OBS...): resolve by name
     # on every start, AFTER creating Record-In
     LIST=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
     VIDEO=$(parse_capture_index "$LIST" "$SCREEN")
-    AUDIO=$(parse_audio_index "$LIST" "$INGRESS")
+    # An exact name (RECORD_MIC, or Record-In when the aggregate exists) is
+    # matched as given. Otherwise the input is resolved from the device list:
+    # the built-in microphone is named after the Mac model, so no single
+    # hardcoded string can be right on more than one machine.
+    if [ -n "$INGRESS" ]; then
+      AUDIO=$(parse_audio_index "$LIST" "$INGRESS")
+    else
+      AUDIO=$(resolve_audio_index "$LIST")
+    fi
     if [ -z "$VIDEO" ] || [ -z "$AUDIO" ]; then
-      echo "Cannot find screen $SCREEN or microphone. Devices seen:"
-      echo "$LIST" | grep '^\[AVFoundation'
+      [ -z "$VIDEO" ] && echo "Cannot find Capture screen $SCREEN (see: record screens)."
+      if [ -z "$AUDIO" ]; then
+        if [ -n "$MIC" ] && [ "$INGRESS" = "$MIC" ]; then
+          # The name the user typed, quoted, because this failure is almost
+          # always a near miss: a shortened name, a missing word, the wrong
+          # capital. The device lookup used to accept a prefix and hand ffmpeg
+          # a mangled index, so the same typo arrived here as a bare "Did not
+          # start" with nothing anywhere that named the cause.
+          echo "RECORD_MIC is \"$MIC\" and no audio input on this Mac has that name."
+          echo "It has to match one of the audio devices below EXACTLY, spaces and"
+          echo "capitals included. Set it in $CONFIG, or leave it empty and record"
+          echo "picks the microphone itself."
+          echo "To see the names again at any time:"
+          echo "  ffmpeg -f avfoundation -list_devices true -i \"\""
+        elif [ -n "$INGRESS" ]; then
+          echo "Cannot find the audio input named \"$INGRESS\"."
+        else
+          echo "Cannot find any usable audio input. Set RECORD_MIC to the exact"
+          echo "device name from the list below, in $CONFIG."
+        fi
+      fi
+      echo "Devices seen:"
+      # `|| echo` is not cosmetic: a bare pipeline here exits 1 under set -e
+      # when ffmpeg is broken and lists nothing, and the script would die on
+      # this line, never reaching restore_audio below. That leaves the Mac
+      # playing into the Record-Out aggregate with only "Did not start" on
+      # screen, and ffmpeg missing from skhd's PATH is a documented first-run
+      # failure, so this is the likely path, not the exotic one.
+      echo "$LIST" | grep '^\[AVFoundation' || echo "  (none: ffmpeg listed no AVFoundation device at all)"
       hide_dot
+      restore_audio
       exit 1
     fi
 
-    open -a Handy
     touch "$SESSION"
     # a leftover pidfile from a crash would make the overlay think ffmpeg is
     # already dead and exit. ffmpeg has not started yet, so this file is stale.
@@ -365,7 +564,7 @@ SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
       -c:a aac "${FILTER[@]}" -b:a 48k \
       -f segment -segment_time 3600 -reset_timestamps 1 -strftime 1 \
       "$DIR/%Y-%m-%d_%H-%M.mp4" \
-      >"$DIR/.record.log" 2>&1 &
+      >>"$DIR/.record.log" 2>&1 &
 
     echo $! > "$PIDFILE"
 
@@ -373,16 +572,28 @@ SUMMARY: <2-3 sentences on the content and any decisions>" 2>/dev/null || true)
     # this shortens the blind window where the user does not know if it is on
     for _ in $(seq 1 40); do
       running || break
-      [ -n "$(find "$DIR" -maxdepth 1 -name '*.mp4' -newer "$SESSION" -print -quit 2>/dev/null)" ] && break
+      [ -n "$(find "$DIR" -maxdepth 1 -name "$CLIPS" -newer "$SESSION" -print -quit 2>/dev/null)" ] && break
       sleep 0.25
     done
 
     if running; then
+      # Only now, with the capture confirmed: a missing app used to abort the
+      # start under set -e, after the output had already been switched to
+      # Record-Out, and the sound stayed on a phantom device. Optional by
+      # default, opt in with RECORD_LAUNCH_APP in the config file.
+      if [ -n "$LAUNCH_APP" ]; then
+        if open -a "$LAUNCH_APP" >/dev/null 2>&1; then
+          echo "Opened $LAUNCH_APP."
+        else
+          echo "Note: could not open \"$LAUNCH_APP\" (RECORD_LAUNCH_APP). Recording continues."
+        fi
+      fi
       label=$(screen_label)
       echo "Recording: ${label:-screen $SCREEN} at 1 fps + microphone, one file per hour in $DIR"
-      echo "Red dot is on that display. Handy is open. To stop (and transcribe): record stop"
+      echo "Red dot is on that display. To stop (and transcribe): record stop"
     else
       hide_dot
+      restore_audio
       echo "ffmpeg did not start. Last lines of the log:"
       tail -5 "$DIR/.record.log"
       if grep -qiE "not permitted|permission|denied|TCC" "$DIR/.record.log" 2>/dev/null; then

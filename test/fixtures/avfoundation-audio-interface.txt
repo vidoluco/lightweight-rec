@@ -1,0 +1,6 @@
+[AVFoundation indev @ 0x7fb1e8e04a00] AVFoundation video devices:
+[AVFoundation indev @ 0x7fb1e8e04a00] [0] Capture screen 0
+[AVFoundation indev @ 0x7fb1e8e04a00] AVFoundation audio devices:
+[AVFoundation indev @ 0x7fb1e8e04a00] [0] BlackHole 2ch
+[AVFoundation indev @ 0x7fb1e8e04a00] [1] Scarlett 2i2 USB
+[AVFoundation indev @ 0x7fb1e8e04a00] [2] Record-In

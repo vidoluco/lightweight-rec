@@ -1,7 +1,51 @@
-# Copy to ~/.config/record/config and uncomment what you need.
-# skhd does not load your shell rc; Option+R only sees this file.
+# lightweight-rec configuration.
+#
+# Copy to ~/.config/record/config and uncomment what you need. skhd does not
+# load your shell rc, so Option+R sees this file and nothing else.
+#
+# Plain shell assignments, one per line: `record` sources this file, so a syntax
+# error here breaks the hotkey. Every key below is optional and shows its
+# default. The same list, with the detail, is the Configuration table in the
+# README.
+#
+# Only RECORD_DIR is destructive: every start deletes this tool's own mp4 files
+# older than RECORD_DAYS at its top level, so give it a directory of its own.
+# The install-time flags (--with-blackhole, --with-handy) go on the ./install.sh
+# command line, never in here.
 
+# Where the mp4 files, the logs and the whisper model live.
 # RECORD_DIR="$HOME/Recordings"
+
+# Root of your Obsidian vault: the folder that has a .obsidian directory in it.
 # RECORD_VAULT="$HOME/Documents/Obsidian"
-# RECORD_NOTES="$HOME/Documents/Obsidian/Recordings"
+
+# Folder the note is filed in. Outside a vault, the stop warns you and says where.
+# RECORD_NOTES="$RECORD_VAULT/Recordings"
+
+# Display to capture, as an ffmpeg avfoundation index. List them: record screens
 # RECORD_SCREEN=0
+
+# Microphone by device name; empty resolves one on every start. It decides on
+# every path, BlackHole included. Check it with: record-audio which
+# RECORD_MIC=""
+
+# 0 turns off BlackHole full-call audio: the microphone alone, no aggregates.
+# RECORD_SYSTEM_AUDIO=1
+
+# 0 never calls the claude CLI: no egress, no title, tags, summary or screen text.
+# RECORD_CLAUDE=1
+
+# Retention in days for this tool's own mp4 files in RECORD_DIR.
+# RECORD_DAYS=14
+
+# App to open once the capture is up, by its name. Empty opens nothing.
+# RECORD_LAUNCH_APP=""
+
+# The red dot overlay, if you moved it out of ~/bin.
+# RECORD_DOT="$HOME/bin/record-dot"
+
+# The CoreAudio helper, if you moved it out of ~/bin.
+# RECORD_AUDIO="$HOME/bin/record-audio"
+
+# The config file itself: read from the environment, so setting it here does nothing.
+# RECORD_CONFIG="$HOME/.config/record/config"

@@ -1,0 +1,7 @@
+[AVFoundation indev @ 0x7fe6b2704e80] AVFoundation video devices:
+[AVFoundation indev @ 0x7fe6b2704e80] [0] iMac Camera
+[AVFoundation indev @ 0x7fe6b2704e80] [1] Capture screen 0
+[AVFoundation indev @ 0x7fe6b2704e80] AVFoundation audio devices:
+[AVFoundation indev @ 0x7fe6b2704e80] [0] BlackHole 2ch
+[AVFoundation indev @ 0x7fe6b2704e80] [1] Yeti Stereo Microphone
+[AVFoundation indev @ 0x7fe6b2704e80] [2] iMac Microphone

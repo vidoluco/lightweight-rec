@@ -1,4 +1,4 @@
-// record-dot — red recording dot on the display ffmpeg is capturing.
+// record-dot: red recording dot on the display ffmpeg is capturing.
 //
 //   record-dot screens
 //       tab-separated: index, display id, name, WxH, flags (main)

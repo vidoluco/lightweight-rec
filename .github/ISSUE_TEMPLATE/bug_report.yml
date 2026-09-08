@@ -1,0 +1,86 @@
+name: Bug report
+description: Something does not record, does not stop, or does not file a note.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you paste anything: this tool handles recordings of your screen
+        and of other people's voices. Redact vault names, client names,
+        meeting titles and absolute home paths from every block below. A
+        public issue is public forever.
+
+        Most reports are answered by the README Troubleshooting section, which
+        covers the hotkey not firing, the missing red dot, a note filed with
+        no summary, and a stuck audio output device. Please read it and search
+        the open issues first.
+
+        This is a one-person project. Six answers are enough to start; leave a
+        field empty rather than guessing at it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+      placeholder: |
+        Pressed Option+R in a Teams call. Got the "Starting recording..."
+        notification, then "Did not start." No mp4 appeared in ~/Recordings.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it, and your setup
+      description: |
+        The shortest sequence that triggers it, including whether a call, an external display, or a sleep or wake cycle was involved.
+
+        Then add, in the same box, whichever of these is relevant to the failure. Do not go and collect them all:
+        chip (`uname -m`), ffmpeg version (`ffmpeg -version`, first line), whisper-cpp version (`brew list --versions whisper-cpp`), whether BlackHole 2ch is installed (`brew list --cask blackhole-2ch`), whether the `claude` CLI is signed in, whether you triggered it with Option+R or by running `record` in a terminal, and any non-default values in `~/.config/record/config` (with your vault path replaced by a placeholder).
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where it goes wrong
+      options:
+        - Setup (install.sh)
+        - Option+R does nothing (skhd or permissions)
+        - Start fails, no video is written
+        - The wrong screen or the wrong microphone is captured
+        - Recording runs but the red dot is wrong or missing
+        - Audio is wrong (only my voice, no voice, or the wrong output device)
+        - Stop fails, or the recording keeps running
+        - Transcription (whisper)
+        - The note (title, tags, summary, screen description, or where it lands)
+        - Retention or disk use
+        - Uninstall
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: "Output of: sw_vers -productVersion"
+      placeholder: "15.6"
+    validations:
+      required: true
+
+  - type: input
+    id: mac-model
+    attributes:
+      label: Mac model
+      description: Apple menu, About This Mac. Display and audio behaviour differs by model, so it is worth a line.
+      placeholder: "MacBook Air (M2, 2022) / Mac mini (M4, 2024)"
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Tail of the log
+      description: "Output of: tail -n 60 ~/Recordings/.record.log   (or the .record.log inside your RECORD_DIR). Redact paths, vault names and meeting names before you paste it. If the failure never got as far as writing a log, say so and leave this empty."
+      render: shell

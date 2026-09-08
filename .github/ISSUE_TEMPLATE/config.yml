@@ -1,0 +1,16 @@
+# Discussions is not enabled on this repository, so nothing here may point at
+# /discussions: that URL 404s for a visitor. Both links have to resolve to a
+# heading that exists in README.md on main.
+#
+# There is no feature request template. What this project takes and what it
+# declines is written down in CONTRIBUTING.md, and the second link below is
+# the short version of it.
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting in the README
+    url: https://github.com/vidoluco/lightweight-rec#troubleshooting
+    about: Option+R does nothing, the red dot is missing, the note has no summary, the audio output is stuck on Record-Out. Start here before opening a bug.
+
+  - name: What this tool deliberately does not do
+    url: https://github.com/vidoluco/lightweight-rec#what-it-deliberately-does-not-do
+    about: No index, no daemon, no UI, no search over past recordings. Read this before reporting a missing feature as a defect.

@@ -1,0 +1,185 @@
+name: CI
+
+# What CI can and cannot prove for this repo.
+#
+# It CAN prove: every shell file parses and passes shellcheck, the test suite
+# under test/ is green, and every Swift helper still compiles.
+#
+# It CANNOT prove: anything that needs a TCC permission grant (Screen
+# Recording, Microphone, Accessibility), a real capture, BlackHole, skhd, the
+# claude CLI, or a whisper transcription. A GitHub runner cannot click a
+# System Settings dialog. Every change to the capture or audio path still has
+# to be exercised by hand on a real Mac before it is merged.
+#
+# Nothing below names an individual test or script. The shell files are
+# discovered, test/run.sh globs its own directory and the Swift step globs
+# *.swift, so adding or deleting a file cannot leave a dangling name here or
+# quietly ship something unchecked.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to the same branch or PR makes the previous run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # No ffmpeg and no whisper-cpp are set up here, on purpose. They are a
+      # multi-hundred-megabyte download and no test needs them: the suite
+      # reads recorded avfoundation fixtures, runs `record help`, greps the
+      # tree, and runs the uninstaller inside a throwaway HOME under the
+      # runner's TMPDIR with a PATH holding neither skhd nor
+      # switchaudiosource, so it touches nothing outside that directory. A
+      # test that does need a heavy dependency has to bring its own setup step
+      # with it.
+      #
+      # swiftc comes from the Xcode toolchain preinstalled on the runner
+      # image, so nothing is fetched. Tests that build record-dot.swift do
+      # need a window server: they create an NSWindow and read NSScreen.
+      # GitHub macOS runners provide a GUI session, so this works, but if one
+      # of them starts failing with an empty screen list, suspect the
+      # environment before suspecting the code: a runner image change here,
+      # or, on a developer's own Mac, a locked or sleeping display, which
+      # makes NSScreen report no display at all.
+      - name: Check the shipped entrypoints are runnable
+        run: |
+          # Both are documented as `./test/run.sh` and `./scripts/uninstall.sh`.
+          # A lost mode bit turns each into a "permission denied" that reads
+          # like a broken tool, so it is caught here and not by a stranger.
+          rc=0
+          for f in ./test/run.sh ./scripts/uninstall.sh; do
+            if [ ! -f "$f" ]; then
+              echo "$f is missing. It is documented as an entrypoint: update the docs or restore the file."
+              rc=1
+            elif [ ! -x "$f" ]; then
+              echo "$f is not executable."
+              echo "Fix it with: chmod +x $f   then commit the mode change."
+              rc=1
+            fi
+          done
+          exit $rc
+
+      - name: Run the test suite
+        run: ./test/run.sh
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Get shellcheck
+        run: |
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          }
+          shellcheck --version
+
+      # The file list is discovered, not spelled out: every tracked file that
+      # is named *.sh or opens with a sh/bash shebang. A script added anywhere
+      # in the tree is linted the day it lands, and a script that is deleted
+      # cannot leave a name behind that turns the job red for the wrong
+      # reason. An empty list is itself a failure: it would mean the discovery
+      # broke, and a green run over nothing is worse than a red one.
+      - name: List the shell files
+        id: files
+        run: |
+          # Written to a file and read back rather than captured in a command
+          # substitution: bash 3.2, which is what a contributor on macOS runs,
+          # cannot parse a `case` inside `$( )`, and a snippet that only works
+          # on the runner is a snippet nobody can debug locally.
+          list_file="${RUNNER_TEMP:-/tmp}/shell-files.txt"
+          : > "$list_file"
+          while IFS= read -r -d '' f; do
+            keep=0
+            case "$f" in
+              *.sh) keep=1 ;;
+            esac
+            if [ "$keep" -eq 0 ]; then
+              # An entrypoint with no extension, such as `record`. Only the
+              # first line is read, and only the first bytes of it, so a large
+              # or binary file costs nothing here.
+              shebang=$(head -c 200 "$f" 2>/dev/null | head -n 1) || shebang=''
+              if printf '%s' "$shebang" | grep -qE '^#!.*[/ ](ba)?sh([[:space:]]|$)'; then
+                keep=1
+              fi
+            fi
+            if [ "$keep" -eq 1 ]; then
+              printf '%s\n' "$f" >> "$list_file"
+            fi
+          done < <(git ls-files -z)
+
+          if [ ! -s "$list_file" ]; then
+            echo "No shell file found. The discovery above is broken."
+            exit 1
+          fi
+          echo "Linting:"
+          sed 's/^/  /' "$list_file"
+          # No path in this repo contains a space, and shellcheck takes a
+          # plain list of files, so one space-joined line carries them to the
+          # two steps below.
+          echo "list=$(tr '\n' ' ' < "$list_file")" >> "$GITHUB_OUTPUT"
+
+      # -x makes shellcheck follow the sourced record-lib.sh instead of
+      # emitting SC1091 for it.
+      #
+      # Per-code exceptions are NOT passed as -e flags here. They live in
+      # .shellcheckrc at the repo root, next to a comment saying why each one
+      # is justified, so the same suppressions apply to a developer running
+      # `shellcheck record` locally. shellcheck finds that file by walking up
+      # from each checked file, and this step runs from the repo root, so it
+      # applies to the root scripts, to scripts/ and to test/ alike. If this
+      # job goes red, fix the script or add a justified line to .shellcheckrc.
+      # Do not add exclusions to this workflow.
+      - name: Lint (severity warning and above, gating)
+        run: shellcheck -x -S warning ${{ steps.files.outputs.list }}
+
+      # The tree is style-clean, so style findings block too. This was advisory
+      # while it was not, and leaving it advisory once it is would mean the
+      # stricter severity silently stops being enforced the first time someone
+      # reintroduces a finding.
+      - name: Lint (info and style)
+        run: shellcheck -x -S style ${{ steps.files.outputs.list }}
+
+  swift:
+    name: swift
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Every .swift file at the repo root, which is where the helpers
+      # install.sh compiles live, so one added later is covered without
+      # editing this workflow. Both frameworks are linked for every file:
+      # install.sh links one each, an unused framework costs nothing, and a
+      # per-file list here would go stale. Swift under test/ is deliberately
+      # not built here, because the test job builds it with the frameworks it
+      # actually needs. Output goes to the runner's temp directory: nothing is
+      # written to ~/bin, nothing is registered, no audio device is created
+      # and nothing is run.
+      - name: Compile the Swift helpers
+        run: |
+          swiftc --version
+          shopt -s nullglob
+          files=(*.swift)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No .swift file found at the repo root. The glob above is broken."
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            echo "Compiling $f"
+            swiftc -O -o "$RUNNER_TEMP/$(basename "$f" .swift)" "$f" \
+              -framework CoreAudio -framework AppKit
+          done

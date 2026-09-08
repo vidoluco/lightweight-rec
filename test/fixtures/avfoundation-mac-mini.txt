@@ -1,0 +1,9 @@
+[AVFoundation indev @ 0x7fd0f9f04240] AVFoundation video devices:
+[AVFoundation indev @ 0x7fd0f9f04240] [0] iPhone Camera
+[AVFoundation indev @ 0x7fd0f9f04240] [1] Capture screen 0
+[AVFoundation indev @ 0x7fd0f9f04240] [2] Capture screen 1
+[AVFoundation indev @ 0x7fd0f9f04240] AVFoundation audio devices:
+[AVFoundation indev @ 0x7fd0f9f04240] [0] BlackHole 2ch
+[AVFoundation indev @ 0x7fd0f9f04240] [1] iPhone Microphone
+[AVFoundation indev @ 0x7fd0f9f04240] [2] Yeti Stereo Microphone
+[AVFoundation indev @ 0x7fd0f9f04240] [3] Microsoft Teams Audio

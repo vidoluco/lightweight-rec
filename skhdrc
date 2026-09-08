@@ -1,6 +1,19 @@
-# Global hotkeys (skhd)
+# lightweight-rec hotkeys (skhd fragment)
+#
+# install.sh copies this file to ~/.config/skhd/lightweight-rec.skhdrc and
+# wires it into ~/.config/skhd/skhdrc with a single line:
+#
+#     .load "/Users/<you>/.config/skhd/lightweight-rec.skhdrc"
+#
+# It is kept separate on purpose. skhd is usually paired with yabai, where
+# skhdrc is a large hand-tuned keymap, and nothing here is allowed to take
+# that file over.
 #
 # Option+R: toggle continuous recording (screen + microphone).
-# Handy dictation stays on Option+A, configured inside Handy itself.
+# To move the toggle to another key, edit the line below and reload skhd
+# with: skhd --reload
 
-alt - r : $HOME/bin/record toggle
+# The path is quoted on purpose: skhd hands this line to a shell, so a bare
+# $HOME word splits on a home directory whose name contains a space and the
+# hotkey dies with nothing on screen and nothing in any log the README names.
+alt - r : "$HOME/bin/record" toggle

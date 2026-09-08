@@ -1,0 +1,19 @@
+# Matches the tree as it is written today: spaces everywhere, no tabs,
+# bash at 2 and Swift at 4.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.swift]
+indent_size = 4
+
+# Markdown turns a line ending in two spaces into a hard line break.
+# Trimming would silently reflow those paragraphs.
+[*.md]
+trim_trailing_whitespace = false
