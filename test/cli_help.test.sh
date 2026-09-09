@@ -12,7 +12,7 @@ help=$("$ROOT/record" help 2>&1) && hrc=0 || hrc=$?
 echo "$help" | grep -q 'Usage: record' || { echo "FAIL: help is not English: $help"; exit 1; }
 
 # Every subcommand the case statement in record handles.
-for sub in start stop status toggle screens transcribe; do
+for sub in start stop status toggle screens mic transcribe; do
   echo "$help" | grep -q "$sub" || { echo "FAIL: help does not mention $sub: $help"; exit 1; }
 done
 

@@ -10,7 +10,7 @@
 
 <!--
 CI is the floor, not the proof. It has no Screen Recording, Microphone or
-Accessibility grant, no BlackHole, no skhd, no whisper model and no AI CLI,
+Accessibility grant, no skhd, no whisper model and no AI CLI,
 so it cannot observe a single real recording. Say what you ran by hand.
 -->
 

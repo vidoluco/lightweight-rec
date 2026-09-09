@@ -26,6 +26,10 @@ build/
 .session
 .dot.pid
 .previous-output
+.sysaudio.fifo
+.sysaudio.ready
+.sysaudio.pid
+.sysaudio.log
 .lock/
 
 # the whisper model is 574 MB and is downloaded, never committed

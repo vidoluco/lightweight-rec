@@ -1,56 +1,65 @@
-// record-audio: create and tear down the aggregate devices for full-call audio.
+// record-audio: the system audio side of a recording, captured natively.
 //
-//   record-audio up     create "Record-In" (mic + BlackHole) and "Record-Out"
-//                       (current output + BlackHole). Current output is read now:
-//                       AirPods at the office, speakers at home, nothing to configure.
-//   record-audio down   destroy both devices and return to the previous output.
-//   record-audio which  print the input device "up" would record from, and touch
-//                       nothing. Read only: it creates and destroys no device, so
-//                       it is safe to run while a recording is going, and it is
-//                       how you check what this tool thinks your microphone is.
+//   record-audio capture FIFO [--ready FILE]
+//                       stream what the Mac is playing into FIFO as raw PCM
+//                       (float32 little endian, 48 kHz, 2 channels) until the
+//                       reader goes away. `record` hands that FIFO to ffmpeg
+//                       as a second input and mixes it with the microphone.
+//                       With --ready, FILE is created the moment the capture
+//                       is up, before the FIFO is opened: the caller waits on
+//                       that file, and a helper that dies first never reaches
+//                       it, so a start can tell "ready" from "failed" without
+//                       guessing at a timeout.
+//   record-audio down [PREVIOUS OUTPUT]
+//                       remove the Record-In and Record-Out aggregate devices
+//                       that versions up to 0.2 created around BlackHole, and
+//                       select PREVIOUS OUTPUT as the system output if given.
+//                       Harmless when there is nothing to remove.
 //
-// Why it exists: ffmpeg can only read input devices, and the other people on a
-// call (coming out of the headphones) never pass through the microphone.
-// BlackHole is a virtual cable: "Record-Out" duplicates output to the
-// headphones AND to the cable, "Record-In" mixes mic and cable. Result:
-// both voices in one device, which ffmpeg records.
+// How the capture works: ScreenCaptureKit taps the audio the system is about
+// to play, before it reaches the output device. Nothing is routed anywhere,
+// no driver is installed, the output device is not switched, and the volume
+// keys keep working. Headphones, speakers, AirPods: all the same to it. The
+// audio arrives continuously, silence included, 50 buffers a second, so the
+// FIFO never starves ffmpeg's mixer; a watchdog pads silence for any gap,
+// which can happen while the output device changes.
 //
-// stdout is a contract the caller depends on:
-//   up     exactly one line, the name of the output device that was selected
-//          before the switch. `record` writes that line to .previous-output and
-//          hands it back to switchaudiosource on stop, so a second line here
-//          would corrupt the restore and leave the Mac on the wrong output.
-//          The resolved input device is reported on stderr instead, and on
-//          stdout by `which`.
-//   which  exactly one line, the name of the resolved input device.
-//   down   nothing.
+// Why a FIFO and not a device: ffmpeg can only read audio from something that
+// looks like an input, and the old way to make system audio look like an input
+// was a loopback driver (BlackHole) plus two CoreAudio aggregates, which is
+// what took the volume keys away. A raw stream on a named pipe needs none of
+// that.
+//
+// Permissions: the same Screen Recording grant ffmpeg's screen capture already
+// needs, attributed to the process that launched us (skhd for Option+R, the
+// terminal for `record start`). No new dialog.
+//
+// Requires macOS 13: that is where ScreenCaptureKit learned to capture audio.
 //
 // Compile (install.sh does this):
-//   swiftc -O -o ~/bin/record-audio record-audio.swift -framework CoreAudio
+//   swiftc -O -o ~/bin/record-audio record-audio.swift \
+//     -framework ScreenCaptureKit -framework CoreMedia -framework CoreAudio
 
 import CoreAudio
+import CoreMedia
 import Foundation
+import ScreenCaptureKit
 
-let UID_IN = "app.lightweight-rec.in"
-let UID_OUT = "app.lightweight-rec.out"
-// Every device this tool creates carries this prefix. Recognising our own work
-// by prefix, not by display name, survives a user renaming the device in Audio
-// MIDI Setup.
-let UID_PREFIX = "app.lightweight-rec."
+let SAMPLE_RATE: Double = 48000
+let CHANNELS = 2
 
-// Names that never carry a voice: loopback cables, meeting-app shims and
-// aggregates. Same list record-lib.sh screens the ffmpeg device list with, so
-// the two halves of the tool agree on what a microphone is.
-let VIRTUAL_TOKENS = [
-    "blackhole", "soundflower", "loopback", "record-in", "record-out",
-    "aggregate", "multi-output", "zoomaudiodevice", "teams audio",
-    "vb-cable", "krisp",
-]
+// Every device the 0.2 helper created carried this prefix. Recognising them by
+// UID and not by display name survives a rename in Audio MIDI Setup.
+let LEGACY_UID_IN = "app.lightweight-rec.in"
+let LEGACY_UID_OUT = "app.lightweight-rec.out"
 
-// Continuity devices: a nearby iPhone offers itself as a microphone and macOS
-// is happy to make it the default input. Recording a meeting through a phone
-// on the far side of the desk is not what anyone meant.
-let CONTINUITY_TOKENS = ["iphone", "ipad", "apple watch"]
+func log(_ message: String) {
+    FileHandle.standardError.write("record-audio: \(message)\n".data(using: .utf8)!)
+}
+
+// ------------------------------------------------------------------ CoreAudio
+// Only what `down` needs: enumerate devices, read a name or UID, pick the
+// default output. Kept small on purpose; the capture path uses none of it.
 
 func stringProp(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
     var addr = AudioObjectPropertyAddress(
@@ -77,42 +86,10 @@ func allDevices() -> [AudioDeviceID] {
     return ids
 }
 
-func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
-    var addr = AudioObjectPropertyAddress(
-        mSelector: selector,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain)
-    var dev = AudioDeviceID(0)
-    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev) == noErr else { return nil }
-    return dev == AudioObjectID(kAudioObjectUnknown) ? nil : dev
-}
-
-func defaultOutput() -> AudioDeviceID? {
-    defaultDevice(kAudioHardwarePropertyDefaultOutputDevice)
-}
-
-// The device the Mac itself records from. This is the whole portability fix:
-// the built-in microphone is named after the model ("Mac mini Microphone",
-// "MacBook Air Microphone"), a desktop Mac may have no built-in microphone at
-// all, and someone with an audio interface wants the interface. Asking
-// CoreAudio which input is selected answers all three at once, and on a Mac
-// whose default input is the built-in microphone it returns exactly the device
-// the old hardcoded UID did.
-func defaultInput() -> AudioDeviceID? {
-    defaultDevice(kAudioHardwarePropertyDefaultInputDevice)
-}
-
-func deviceName(_ id: AudioDeviceID) -> String {
-    stringProp(id, kAudioObjectPropertyName) ?? ""
-}
-
-// Channels a device offers on the input scope. Zero means it cannot be
-// recorded from, whatever it is called: speakers and displays are devices too.
-func inputChannels(_ id: AudioDeviceID) -> Int {
+func outputChannels(_ id: AudioDeviceID) -> Int {
     var addr = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyStreamConfiguration,
-        mScope: kAudioDevicePropertyScopeInput,
+        mScope: kAudioDevicePropertyScopeOutput,
         mElement: kAudioObjectPropertyElementMain)
     var size: UInt32 = 0
     guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return 0 }
@@ -125,202 +102,260 @@ func inputChannels(_ id: AudioDeviceID) -> Int {
     return list.reduce(0) { $0 + Int($1.mNumberChannels) }
 }
 
-func transportType(_ id: AudioDeviceID) -> UInt32 {
+func setDefaultOutput(_ id: AudioDeviceID) -> Bool {
     var addr = AudioObjectPropertyAddress(
-        mSelector: kAudioDevicePropertyTransportType,
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain)
-    var value = UInt32(0)
-    var size = UInt32(MemoryLayout<UInt32>.size)
-    guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr else { return 0 }
-    return value
+    var dev = id
+    let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    return AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, size, &dev) == noErr
 }
 
-func findByUID(_ uid: String) -> AudioDeviceID? {
-    allDevices().first { stringProp($0, kAudioDevicePropertyDeviceUID) == uid }
-}
-
-func findByName(_ fragment: String) -> AudioDeviceID? {
-    allDevices().first { deviceName($0).contains(fragment) }
-}
-
-// Refused as the ingress no matter what the config says. BlackHole is the far
-// end of the call, not a voice: putting it on both sides of Record-In records
-// the room twice and the speaker never. Our own aggregates would nest into
-// themselves.
-func forbiddenIngress(_ id: AudioDeviceID) -> String? {
-    let uid = stringProp(id, kAudioDevicePropertyDeviceUID) ?? ""
-    if uid == UID_IN || uid == UID_OUT || uid.hasPrefix(UID_PREFIX) {
-        return "it is an aggregate this tool created"
+// Tear down what an older version left behind. Returns how many devices went.
+func destroyLegacyAggregates() -> Int {
+    var removed = 0
+    for id in allDevices() {
+        let uid = stringProp(id, kAudioDevicePropertyDeviceUID) ?? ""
+        if uid == LEGACY_UID_IN || uid == LEGACY_UID_OUT {
+            if AudioHardwareDestroyAggregateDevice(id) == noErr { removed += 1 }
+        }
     }
-    if deviceName(id).lowercased().contains("blackhole") {
-        return "it is the BlackHole loopback, which carries the other side of the call, not your voice"
-    }
-    return nil
+    return removed
 }
 
-// Additionally skipped when nothing was asked for by name. A user who names one
-// of these explicitly gets it: a noise-suppression shim in front of a real
-// microphone is a legitimate choice, guessing your way into one is not.
-func autoSkip(_ id: AudioDeviceID) -> Bool {
-    if forbiddenIngress(id) != nil { return true }
-    if transportType(id) == kAudioDeviceTransportTypeAggregate { return true }
-    let name = deviceName(id).lowercased()
-    return VIRTUAL_TOKENS.contains { name.contains($0) }
-}
+// ------------------------------------------------------------------- capture
 
-enum Resolved {
-    case device(AudioDeviceID, String)
-    case failure(String)
-}
+@available(macOS 13.0, *)
+final class SystemAudioWriter: NSObject, SCStreamOutput, SCStreamDelegate {
+    private let queue = DispatchQueue(label: "app.lightweight-rec.audio")
+    private var fd: Int32 = -1
+    private var scratch = [Float](repeating: 0, count: 4096 * CHANNELS)
+    private var lastWrite = Date()
+    private var formatChecked = false
+    private var buffers = 0
+    private var padded = 0
+    private var watchdog: DispatchSourceTimer?
 
-// Order of preference, once RECORD_MIC has had its say:
-//   1. the input the Mac is set to record from (kAudioHardwarePropertyDefaultInputDevice)
-//   2. a built-in microphone, whatever this model calls it
-//   3. any other real microphone, an interface or a USB one
-//   4. the first remaining input
-func resolveInput() -> Resolved {
-    let inputs = allDevices().filter { inputChannels($0) > 0 }
-    if inputs.isEmpty {
-        return .failure("no audio input device on this Mac: nothing can be recorded from.")
+    var handlerQueue: DispatchQueue { queue }
+
+    // Called once the reader is connected. From here on every buffer is written.
+    func attach(fd: Int32) {
+        queue.sync {
+            self.fd = fd
+            self.lastWrite = Date()
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
+            timer.setEventHandler { [weak self] in self?.padGapIfAny() }
+            timer.resume()
+            self.watchdog = timer
+        }
     }
 
-    let requested = (ProcessInfo.processInfo.environment["RECORD_MIC"] ?? "")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    if !requested.isEmpty {
-        let wanted = requested.lowercased()
-        let exact = inputs.first { deviceName($0).lowercased() == wanted }
-        let partial = inputs.first { deviceName($0).lowercased().contains(wanted) }
-        guard let id = exact ?? partial else {
-            // A device of that name may well exist and simply have no input:
-            // saying "not found" about the speakers sitting right there sends
-            // the reader looking for a typo that is not the problem.
-            let outputOnly = allDevices().first { deviceName($0).lowercased().contains(wanted) }
-            if let other = outputOnly {
-                return .failure("RECORD_MIC is \"\(requested)\" and \"\(deviceName(other))\" is an output "
-                    + "device: it has no input channels, so nothing can be recorded from it.")
+    // ScreenCaptureKit delivers a buffer every 20 ms, silence included. If it
+    // stops, the mixer on the other side of the FIFO would wait forever for
+    // this input, so any gap longer than half a second is filled with silence
+    // of the same length. That keeps the mix moving and keeps the timeline
+    // honest: the microphone track is not shifted against the video.
+    private func padGapIfAny() {
+        guard fd >= 0 else { return }
+        let gap = Date().timeIntervalSince(lastWrite)
+        guard gap > 0.5 else { return }
+        let frames = Int(gap * SAMPLE_RATE)
+        let zeros = [Float](repeating: 0, count: frames * CHANNELS)
+        if padded == 0 {
+            log("no system audio for \(String(format: "%.1f", gap))s, padding with silence (output device changing?)")
+        }
+        padded += 1
+        writeAll(zeros)
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .audio, fd >= 0 else { return }
+        if !formatChecked {
+            formatChecked = true
+            if let asbd = sb.formatDescription?.audioStreamBasicDescription {
+                let isFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+                if asbd.mSampleRate != SAMPLE_RATE || Int(asbd.mChannelsPerFrame) != CHANNELS || !isFloat || asbd.mBitsPerChannel != 32 {
+                    // ffmpeg was told 48 kHz stereo float on the other end of the
+                    // pipe, so anything else would play at the wrong speed. Fail
+                    // out loud; the caller records the microphone alone.
+                    log("unexpected audio format from ScreenCaptureKit: \(asbd.mSampleRate) Hz, \(asbd.mChannelsPerFrame) ch, \(asbd.mBitsPerChannel) bit, float=\(isFloat)")
+                    exit(2)
+                }
             }
-            return .failure("RECORD_MIC is \"\(requested)\" and no audio input on this Mac carries that name. "
-                + "List them with: ffmpeg -f avfoundation -list_devices true -i \"\"")
         }
-        if let why = forbiddenIngress(id) {
-            return .failure("RECORD_MIC picks \"\(deviceName(id))\" and \(why). "
-                + "Set it to the microphone you talk into.")
+        do {
+            try sb.withAudioBufferList(flags: []) { abl, _ in
+                let frames = Int(sb.numSamples)
+                guard frames > 0 else { return }
+                let needed = frames * CHANNELS
+                if scratch.count < needed { scratch = [Float](repeating: 0, count: needed) }
+                if abl.count >= CHANNELS {
+                    // Non-interleaved, one buffer per channel: interleave into
+                    // L R L R, which is what f32le with -ac 2 means to ffmpeg.
+                    for ch in 0..<CHANNELS {
+                        guard let src = abl[ch].mData?.assumingMemoryBound(to: Float.self) else { continue }
+                        let avail = min(frames, Int(abl[ch].mDataByteSize) / MemoryLayout<Float>.size)
+                        for i in 0..<avail { scratch[i * CHANNELS + ch] = src[i] }
+                    }
+                } else if let src = abl[0].mData?.assumingMemoryBound(to: Float.self) {
+                    // Already interleaved: copy through.
+                    let avail = min(needed, Int(abl[0].mDataByteSize) / MemoryLayout<Float>.size)
+                    for i in 0..<avail { scratch[i] = src[i] }
+                }
+                writeAll(Array(scratch[0..<needed]))
+            }
+        } catch {
+            log("could not read an audio buffer: \(error)")
         }
-        return .device(id, deviceName(id))
+        buffers += 1
     }
 
-    if let id = defaultInput(), inputs.contains(id), !autoSkip(id) {
-        return .device(id, deviceName(id))
-    }
-    if let id = inputs.first(where: { transportType($0) == kAudioDeviceTransportTypeBuiltIn && !autoSkip($0) }) {
-        return .device(id, deviceName(id))
-    }
-    if let id = inputs.first(where: {
-        let name = deviceName($0).lowercased()
-        return name.contains("microphone")
-            && !CONTINUITY_TOKENS.contains(where: { name.contains($0) })
-            && !autoSkip($0)
-    }) {
-        return .device(id, deviceName(id))
-    }
-    if let id = inputs.first(where: { !autoSkip($0) }) {
-        return .device(id, deviceName(id))
-    }
-    return .failure("every audio input on this Mac is a loopback or an aggregate, and none of them "
-        + "carries a voice. Set RECORD_MIC to the microphone you talk into.")
-}
-
-func fail(_ message: String) {
-    FileHandle.standardError.write("record-audio: \(message)\n".data(using: .utf8)!)
-}
-
-func destroy() {
-    for uid in [UID_IN, UID_OUT] {
-        if let id = findByUID(uid) {
-            AudioHardwareDestroyAggregateDevice(id)
+    private func writeAll(_ samples: [Float]) {
+        samples.withUnsafeBytes { raw in
+            var offset = 0
+            let total = raw.count
+            while offset < total {
+                let n = write(fd, raw.baseAddress! + offset, total - offset)
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    // EPIPE: ffmpeg closed its end, which is how every stop
+                    // looks from here. Anything else is worth a line.
+                    if errno != EPIPE { log("write failed: \(String(cString: strerror(errno)))") }
+                    finish(code: 0)
+                }
+                offset += n
+            }
         }
+        lastWrite = Date()
+    }
+
+    func finish(code: Int32) -> Never {
+        if fd >= 0 { close(fd) }
+        log("stopped after \(buffers) buffers\(padded > 0 ? ", \(padded) silence pads" : "")")
+        exit(code)
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        // Screen Recording revoked mid-take, or the display went away. ffmpeg
+        // sees end of stream on this input and carries on with the microphone.
+        log("capture stopped by the system: \(error.localizedDescription)")
+        finish(code: 2)
     }
 }
 
-func create(name: String, uid: String, subs: [String], master: String, stacked: Bool) -> Bool {
-    let list = subs.map { sub -> [String: Any] in
-        [kAudioSubDeviceUIDKey: sub,
-         // drift compensation goes on the non-master devices: AirPods and
-         // BlackHole clocks do not tick together, someone has to adapt
-         kAudioSubDeviceDriftCompensationKey: sub == master ? 0 : 1]
+@available(macOS 13.0, *)
+func capture(fifo: String, ready: String?) -> Never {
+    // The reader may vanish at any moment; a dead pipe must be an error we
+    // handle, not a signal that kills us before the log line is written.
+    signal(SIGPIPE, SIG_IGN)
+    signal(SIGTERM) { _ in exit(0) }
+    signal(SIGINT) { _ in exit(0) }
+
+    let writer = SystemAudioWriter()
+    let started = DispatchSemaphore(value: 0)
+    var failure: String?
+    var stream: SCStream?
+
+    Task {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            guard let display = content.displays.first else {
+                failure = "no display to attach the audio capture to"
+                started.signal()
+                return
+            }
+            // Audio only. The stream still needs a display to exist on, so it
+            // gets one at 2x2 pixels and one frame a second, and no video
+            // output is ever added to it: the screen is ffmpeg's job.
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let cfg = SCStreamConfiguration()
+            cfg.capturesAudio = true
+            cfg.sampleRate = Int(SAMPLE_RATE)
+            cfg.channelCount = CHANNELS
+            cfg.excludesCurrentProcessAudio = true
+            cfg.width = 2
+            cfg.height = 2
+            cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            cfg.showsCursor = false
+            let s = SCStream(filter: filter, configuration: cfg, delegate: writer)
+            try s.addStreamOutput(writer, type: .audio, sampleHandlerQueue: writer.handlerQueue)
+            try await s.startCapture()
+            stream = s
+        } catch {
+            failure = error.localizedDescription
+        }
+        started.signal()
     }
-    var desc: [String: Any] = [
-        kAudioAggregateDeviceNameKey: name,
-        kAudioAggregateDeviceUIDKey: uid,
-        kAudioAggregateDeviceSubDeviceListKey: list,
-        kAudioAggregateDeviceMainSubDeviceKey: master,
-    ]
-    if stacked { desc[kAudioAggregateDeviceIsStackedKey] = 1 }  // multi-output, not aggregate
-    var id = AudioDeviceID(0)
-    return AudioHardwareCreateAggregateDevice(desc as CFDictionary, &id) == noErr
+    started.wait()
+    if let why = failure {
+        log("could not start the system audio capture: \(why)")
+        log("if this is a permission problem: System Settings > Privacy and Security > Screen Recording")
+        exit(1)
+    }
+    _ = stream
+
+    if let ready = ready {
+        FileManager.default.createFile(atPath: ready, contents: nil)
+    }
+    log("capturing system audio, waiting for the reader on \(fifo)")
+
+    // Blocks until ffmpeg opens the other end. Buffers that arrive meanwhile
+    // are dropped on purpose: the recording starts when the reader does.
+    let fd = open(fifo, O_WRONLY)
+    if fd < 0 {
+        log("cannot open \(fifo) for writing: \(String(cString: strerror(errno)))")
+        exit(1)
+    }
+    writer.attach(fd: fd)
+    log("reader connected, streaming")
+    dispatchMain()
 }
 
-let command = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
+// ------------------------------------------------------------------- main
+
+let args = CommandLine.arguments
+let command = args.count > 1 ? args[1] : ""
 
 switch command {
-case "up":
-    destroy()  // leftovers from a previous start must not accumulate
-
-    guard let bh = findByName("BlackHole 2ch"),
-          let bhUID = stringProp(bh, kAudioDevicePropertyDeviceUID) else {
-        fail("BlackHole not installed: brew install --cask blackhole-2ch")
-        exit(2)
-    }
-    // resolved after destroy(): a crashed run can leave Record-In behind as the
-    // default input, and it must not be picked as the microphone that feeds the
-    // Record-In we are about to build.
-    let micID: AudioDeviceID
-    let micName: String
-    switch resolveInput() {
-    case .device(let id, let name):
-        micID = id
-        micName = name
-    case .failure(let why):
-        fail(why)
+case "capture":
+    guard args.count > 2 else {
+        log("usage: record-audio capture FIFO [--ready FILE]")
         exit(1)
     }
-    guard let micUID = stringProp(micID, kAudioDevicePropertyDeviceUID) else {
-        fail("\"\(micName)\" has no CoreAudio UID, so it cannot go into an aggregate.")
-        exit(1)
+    let fifo = args[2]
+    var ready: String?
+    var i = 3
+    while i < args.count {
+        if args[i] == "--ready", i + 1 < args.count {
+            ready = args[i + 1]
+            i += 2
+        } else {
+            log("unknown argument: \(args[i])")
+            exit(1)
+        }
     }
-    guard let out = defaultOutput(),
-          let outUID = stringProp(out, kAudioDevicePropertyDeviceUID),
-          outUID != UID_OUT else {
-        fail("system output is not readable")
-        exit(1)
+    if #available(macOS 13.0, *) {
+        capture(fifo: fifo, ready: ready)
+    } else {
+        log("system audio capture needs macOS 13 or newer")
+        exit(3)
     }
-
-    guard create(name: "Record-In", uid: UID_IN, subs: [micUID, bhUID], master: micUID, stacked: false),
-          create(name: "Record-Out", uid: UID_OUT, subs: [outUID, bhUID], master: outUID, stacked: true) else {
-        fail("failed to create the aggregate devices")
-        destroy()
-        exit(1)
-    }
-    // stderr, not stdout: stdout below belongs to the previous output name.
-    fail("microphone side of Record-In is \"\(micName)\"")
-    // name of the previous output: printed so the script can save and restore it
-    print(stringProp(out, kAudioObjectPropertyName) ?? "")
 
 case "down":
-    destroy()
-
-case "which":
-    // Read only on purpose: nothing here creates, destroys or selects a device.
-    switch resolveInput() {
-    case .device(_, let name):
-        print(name)
-    case .failure(let why):
-        fail(why)
-        exit(1)
+    let removed = destroyLegacyAggregates()
+    if removed > 0 { log("removed \(removed) legacy aggregate device(s)") }
+    if args.count > 2 {
+        let wanted = args[2]
+        if let id = allDevices().first(where: { stringProp($0, kAudioObjectPropertyName) == wanted && outputChannels($0) > 0 }) {
+            if !setDefaultOutput(id) { log("could not select \"\(wanted)\" as the output") }
+        } else {
+            log("no output device named \"\(wanted)\"; pick one in Sound settings")
+        }
     }
 
 default:
-    print("Usage: record-audio up|down|which")
+    print("Usage: record-audio capture FIFO [--ready FILE] | down [PREVIOUS OUTPUT]")
     exit(1)
 }

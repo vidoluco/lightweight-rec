@@ -10,8 +10,8 @@
 #
 # Only RECORD_DIR is destructive: every start deletes this tool's own mp4 files
 # older than RECORD_DAYS at its top level, so give it a directory of its own.
-# The install-time flags (--with-blackhole, --with-handy) go on the ./install.sh
-# command line, never in here.
+# The install-time flag (--with-handy) goes on the ./install.sh command line,
+# never in here.
 
 # Where the mp4 files, the logs and the whisper model live.
 # RECORD_DIR="$HOME/Recordings"
@@ -25,11 +25,13 @@
 # Display to capture, as an ffmpeg avfoundation index. List them: record screens
 # RECORD_SCREEN=0
 
-# Microphone by device name; empty resolves one on every start. It decides on
-# every path, BlackHole included. Check it with: record-audio which
+# Microphone by device name, exactly as ffmpeg lists it; empty resolves one on
+# every start. Check what a start would open with: record mic
 # RECORD_MIC=""
 
-# 0 turns off BlackHole full-call audio: the microphone alone, no aggregates.
+# 1 mixes in what the Mac plays, the other side of a call included, captured
+# natively (no driver, output device untouched). 0 records the microphone
+# alone, so on headphones only your own voice.
 # RECORD_SYSTEM_AUDIO=1
 
 # The CLI that writes the title, tags, summary and screen description, and the
@@ -56,7 +58,7 @@
 # The red dot overlay, if you moved it out of ~/bin.
 # RECORD_DOT="$HOME/bin/record-dot"
 
-# The CoreAudio helper, if you moved it out of ~/bin.
+# The system audio helper, if you moved it out of ~/bin.
 # RECORD_AUDIO="$HOME/bin/record-audio"
 
 # The config file itself: read from the environment, so setting it here does nothing.

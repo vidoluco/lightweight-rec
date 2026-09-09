@@ -1,10 +1,10 @@
 <img src="docs/header.svg" alt="lightweight-rec. One shortcut records the screen at one frame per second with the microphone, transcribes on the Mac, and files a Markdown note in your vault." width="100%">
 
-Press Option+R. One display is recorded at 1 frame per second, your microphone
-with it, locally. Press it again: a Markdown note, transcript included, appears
-in the Obsidian vault you already use. The title, tags and summary come from
-whichever coding CLI you already have signed in, Claude Code, Cursor or
-Copilot, or from none of them.
+Press Option+R. One display is recorded at 1 frame per second, with your
+microphone and what the Mac is playing, all locally. Press it again: a Markdown
+note with the transcript lands in the Obsidian vault you already use. Title,
+tags and summary come from a coding CLI you already have signed in (Claude
+Code, Cursor or Copilot), or from none of them.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey.svg)](#requirements)
@@ -15,7 +15,7 @@ Copilot, or from none of them.
      of the note stands in. -->
 <!-- ![Option+R, a red dot on the captured display, and the note it files in Obsidian](docs/demo.gif) -->
 
-That note is the product. Here is one, filed as
+The note is the product. This one was filed as
 `2026-05-14 1132 Retry Budget For The Ingest Worker.md`:
 
 <img src="docs/note.svg" alt="The Markdown note lightweight-rec files: frontmatter with tags and date, a title, a summary, the path of the video, what was on screen with timestamps, and the transcript." width="100%">
@@ -60,7 +60,7 @@ the alert threshold for a follow-up.
 
 </details>
 
-## What it is
+## How it works
 
 One mp4 per hour, a red dot on the captured display while a take runs, and
 transcript sections named after their video file, so the note takes you to the
@@ -74,6 +74,7 @@ right minute of the right hour.
 ```
 Option+R ──► red dot on the captured display (Capture screen N, default 0)
              ffmpeg: 1 fps screen + microphone, hardware HEVC
+             record-audio: what the Mac plays, captured natively, mixed in
                  │        one mp4 per hour in ~/Recordings  (~110 MB/hour)
                  │        each start deletes this tool's own mp4 files in that
                  │        folder older than RECORD_DAYS (14 by default)
@@ -93,76 +94,59 @@ Option+R ──► stop │
 
 </details>
 
+## Why it exists
+
+Rewind shut down in December 2025. Screenpipe, OpenRecall, LUCI and Trace
+share one architecture: periodic screenshots, OCR, a database, a daemon and a
+search UI over your timeline. This goes the other way.
+
+- **1 fps video, not screenshots plus OCR.** One HEVC file per hour is cheaper
+  than a screenshot corpus, and it plays back.
+- **No daemon, no index.** Nothing runs until you press Option+R. Nothing
+  survives the stop but the mp4 files and the note.
+- **The note lives in your vault.** Search is whatever your vault already does.
+
+It is a written record of a work session, not a searchable timeline of your
+day. So, deliberately: no background capture, no OCR or full-text index, no
+timeline browser or menu bar app, no cloud, no account, no telemetry, no
+redaction or app exclusion list. macOS 13 or newer, Apple Silicon only.
+
 ## Plug any CLI
 
 <img src="docs/any-cli.svg" alt="One config line, RECORD_AI, picks which CLI writes the title, tags, summary and screen description: Claude Code, Cursor CLI or Copilot CLI. The note is the same either way." width="100%">
 
-The title, tags, summary and screen description come from a coding CLI you
-already have on the machine and signed in. One line in
-`~/.config/record/config` picks it. Nothing else in the pipeline changes, and
-neither does the note.
+One line in `~/.config/record/config` picks which CLI writes the title, tags,
+summary and screen description. Nothing else changes, the note included.
 
 | `RECORD_AI` | Binary | Default models | How the frames reach it |
 |---|---|---|---|
-| `claude` (default) | `claude` | `sonnet` for the frames, `haiku` for the metadata | by path, with the `Read` tool and nothing else allowed |
-| `cursor` | `cursor-agent` | `cursor-grok-4.6-high` for both | it opens them itself, in read-only ask mode, inside a workspace that is the scratch directory and nothing else |
-| `copilot` | `copilot` | `gemini-3.8-flash` for both | as attachments, with every tool switched off |
+| `claude` (default) | `claude` | `sonnet` frames, `haiku` metadata | by path, `Read` tool only |
+| `cursor` | `cursor-agent` | `cursor-grok-4.6-high` | read-only ask mode, workspace limited to the scratch directory |
+| `copilot` | `copilot` | `gemini-3.8-flash` | as attachments, every tool off |
 
 ```bash
-RECORD_AI=copilot                         # or cursor, or claude, or 0 for no call at all
+RECORD_AI=copilot                         # or cursor, claude, or 0 for no call at all
 RECORD_AI_VISION_MODEL=gemini-3.8-flash   # optional: the model that reads the frames
 RECORD_AI_META_MODEL=gemini-3.8-flash     # optional: the model that writes title, tags, summary
 ```
 
-The model ids are the ones the CLI itself lists (`cursor-agent models`, or
-Copilot's `/model` picker). `install.sh` installs none of the three and checks
-none of them. A model the CLI does not carry makes the call fail, and the note
-says so with the CLI's own error kept in `.transcribe.log`, rather than
-quietly answering with another model. `RECORD_CLAUDE=0`, the switch's name in
-earlier releases, still means off.
-
-## Why this exists, and how it differs
-
-Rewind popularised recording your day and shut down after Limitless was acquired
-in December 2025. Screenpipe (YC S26) is the active incumbent, source-available,
-paid for commercial use; OpenRecall, LUCI and Trace share its architecture:
-periodic screenshots, OCR, an embedded database, a daemon, and a search UI over
-the timeline. This one goes the other way:
-
-- 1 fps video instead of screenshots plus OCR. One HEVC file per hour is cheaper
-  per hour of coverage than a screenshot corpus, and it plays back.
-- No index and no daemon. Nothing runs until you press Option+R, and nothing
-  survives the stop but the mp4 files and the note.
-- The output is a Markdown note in the PKM you already use. Search is whatever
-  your vault already does.
-
-Not a searchable timeline of everything you saw: a written record of a work
-session you would otherwise write yourself.
-
-### What it deliberately does not do
-
-- No continuous background capture. You start and stop it by hand.
-- No OCR, no full-text index, no semantic search over past recordings.
-- No timeline browser, no menu bar app, no preferences window.
-- No cloud storage, no sync, no account, no telemetry.
-- macOS only, and only Apple Silicon is tested.
-- No retention policy beyond a flat age cutoff in days on the mp4 files.
-- No redaction, no app or window exclusion list, no pause for a password field.
+Model ids are the ones the CLI lists itself. `install.sh` installs and checks
+none of the three. A model the CLI does not carry makes the call fail and the
+note says so, with the CLI's error in `.transcribe.log`; it never falls back to
+another model silently.
 
 ## Requirements
 
 | Item | Detail |
 |---|---|
-| OS | macOS on Apple Silicon: capture uses `hevc_videotoolbox`. Intel is untested. |
-| Homebrew, Xcode CLT | Dependencies come from brew, the Swift helpers are built with `swiftc`. `install.sh` checks both, and a writable `~/bin`, before it writes anything, and prints the remedy instead of failing halfway. |
-| Disk | 574 MB once for the whisper model, verified by size and SHA-256, plus about 110 MB per recorded hour: see [Cost and footprint](#cost-and-footprint). |
-| Microphone | Any. Left unset, the input is resolved on every start: the built-in microphone under whatever name your Mac model gives it, else any other real microphone. Loopback and meeting-app devices are never picked. `RECORD_MIC` overrides that choice, on the [full call audio](#full-call-audio-blackhole) path too. |
-| BlackHole 2ch | Optional and opt in, `./install.sh --with-blackhole`: it is an audio driver and asks for your admin password. Without it, on headphones only your own voice is recorded. See [Full call audio](#full-call-audio-blackhole). |
-| An AI CLI | Optional, and the only non-local, paid piece: `claude`, `cursor-agent` or `copilot`, whichever `RECORD_AI` names, signed in to its own paid plan. `install.sh` neither installs nor checks it. Without it, or with `RECORD_AI=0`, the note still lands with the full transcript, titled `Recorded session`, with no summary and no screen section. See [Plug any CLI](#plug-any-cli). |
+| OS | macOS 13 or newer, Apple Silicon. Hardware HEVC for the video, ScreenCaptureKit for the system audio. Intel untested. |
+| Homebrew, Xcode CLT | Dependencies come from brew, the two Swift helpers are built with `swiftc`. `install.sh` checks both before writing anything. |
+| Disk | 574 MB once for the whisper model, then about 110 MB per recorded hour. See [Cost and footprint](#cost-and-footprint). |
+| Microphone | Any. Resolved on every start (built-in first, then any real microphone, never a loopback or meeting-app device), or pinned with `RECORD_MIC`. |
+| System audio | Nothing to install: no driver, no admin password, output device and volume keys untouched. See [Full call audio](#full-call-audio). |
+| An AI CLI | Optional, and the only paid, off-machine piece. Without it the note still lands with the full transcript and a generic title. |
 
 ## Quickstart
-
-The shell command is `record`. The repo is `lightweight-rec`.
 
 ```bash
 git clone https://github.com/vidoluco/lightweight-rec.git
@@ -170,237 +154,130 @@ cd lightweight-rec
 ./install.sh
 ```
 
-Two extras exist and neither is installed unless you ask:
-`--with-blackhole` for the loopback driver that gets the other side of a call
-into the recording, `--with-handy` for Handy, an unrelated dictation app some
-people pair with this.
+The installer puts four files in `~/bin`, adds it to `PATH` in `~/.zshrc`,
+writes `~/.config/record/config` from `config.example` if absent, fetches the
+whisper model (verified by size and SHA-256) and wires the hotkey. Open a new
+terminal afterwards. `--with-handy` adds Handy, an unrelated dictation app; it
+is the only extra and it is off by default.
 
-It puts four files in `~/bin` (two built with `swiftc`), adds `~/bin` to the
-`PATH` in `~/.zshrc`, writes `~/.config/record/config` from `config.example` if
-absent, fetches the whisper model and verifies it by byte count and SHA-256,
-wires up the hotkey, and ends by saying whether `RECORD_VAULT` is a real Obsidian
-vault. Open a new terminal, or `record` is not on your `PATH` yet.
+**Your skhd config is safe.** The binding lives in its own file,
+`~/.config/skhd/lightweight-rec.skhdrc`; your `skhdrc` gets one `.load` line,
+after a timestamped backup, and is left alone entirely if it already binds
+`alt - r`. A running skhd is reloaded, never restarted.
 
-**Your skhd config is safe.** The binding goes in its own file,
-`~/.config/skhd/lightweight-rec.skhdrc`, and the only thing that reaches
-`~/.config/skhd/skhdrc` is one `.load` line, appended after a timestamped
-`.bak`. If you already bind `alt - r` yourself, your skhdrc is not touched at
-all: the installer prints the clash and what to do about it. A running skhd is
-reloaded, not restarted, so your other hotkeys never go down.
-
-Then three permissions, once, in System Settings, Privacy and Security:
-**Accessibility** for `/opt/homebrew/bin/skhd` (elsewhere, the path from
-`brew --prefix`), then **Screen Recording** and **Microphone** for skhd. The
-service restarts itself after each; if not, `skhd --restart-service`.
+Then, once, in System Settings, Privacy and Security: **Accessibility**,
+**Screen Recording** and **Microphone** for skhd (`/opt/homebrew/bin/skhd`).
+Screen Recording also covers the system audio capture.
 
 ## Usage
 
-| Gesture | Effect |
+| Command | Effect |
 |---|---|
-| `Option+R` | start or stop, with a notification |
-| `record status` | running or idle, which screen, how much disk the videos use |
-| `record screens` | displays, their ffmpeg index, and which one is recorded |
-| `record stop` | force stop, including inside the 20s double-tap window |
-| `record transcribe` | file the note for a session that was never filed. It clears the session marker, so it runs once per session |
-| `record-audio which` | the microphone the full-call-audio path would put inside the aggregate, read only: it creates and destroys nothing, so it is safe mid-take |
+| `Option+R` | start or stop, with a notification. A second tap within 20 s is ignored: it meant start, not stop |
+| `record status` | running or idle, which screen, which audio, disk used by the videos |
+| `record screens` | displays, their ffmpeg index, which one is recorded |
+| `record mic` | the microphone the next start would open, and the system audio switch. Read only |
+| `record stop` | force stop, inside the 20 s window too |
+| `record transcribe` | file the note for a session that was never filed |
 
-Option+R ignores a second tap in the first 20 seconds: that tap meant "start",
-not "stop". If you forget to stop and close the Mac, the hours already written
-are intact and `record stop` the next morning transcribes them. A segment the
-shutdown left unreadable costs that segment and nothing else: it is skipped, the
-rest still becomes a note, and the note names what was dropped.
+Closed the lid without stopping? The hours already written are intact and
+`record stop` the next morning transcribes them. A segment left unreadable is
+skipped and named in the note; the rest still becomes the note.
 
 ## Configuration
 
-Machine-specific settings go in `~/.config/record/config`. skhd does not load
-your shell rc, so that file is the only override Option+R sees. Copy
-`config.example`, which lists every key below.
+Machine-specific settings go in `~/.config/record/config`, the one file
+Option+R reads (skhd does not load your shell rc). `config.example` lists
+every key.
 
 | Variable | Default | What it controls |
 |---|---|---|
 | `RECORD_DIR` | `~/Recordings` | mp4 files, logs, pid files, `.whisper/` with the model |
 | `RECORD_VAULT` | `~/Documents/Obsidian` | vault root, the base for `RECORD_NOTES` |
 | `RECORD_NOTES` | `$RECORD_VAULT/Recordings` | folder the note is written to |
-| `RECORD_SCREEN` | `0` | which `Capture screen N` is recorded, and where the dot goes |
-| `RECORD_MIC` | empty | the microphone to record from, by device name; empty resolves one on every start. It decides on every path, BlackHole included, where it names the microphone inside Record-In: see [Full call audio](#full-call-audio-blackhole) |
-| `RECORD_SYSTEM_AUDIO` | `1` | `0` gives up the BlackHole aggregates: the microphone alone, opened directly by ffmpeg |
-| `RECORD_AI` | `claude` | the CLI that writes the title, tags, summary and screen description: `claude`, `cursor` or `copilot`. `0` stops every call: no egress, no frames extracted, no title, tags, summary or screen description |
-| `RECORD_AI_VISION_MODEL` | empty | the model that reads the screen frames, in the id the CLI lists; empty is the CLI's default (`sonnet`, `cursor-grok-4.6-high`, `gemini-3.8-flash`) |
-| `RECORD_AI_META_MODEL` | empty | the model that writes the title, tags and summary; empty is the CLI's default (`haiku`, `cursor-grok-4.6-high`, `gemini-3.8-flash`) |
-| `RECORD_CLAUDE` | `1` | the old name of the off switch: `0` still means no call at all |
-| `RECORD_DAYS` | `14` | age past which this tool's own mp4 files are deleted, in days |
-| `RECORD_LAUNCH_APP` | empty | an app to `open -a` once the capture is up; empty launches nothing |
-| `RECORD_DOT` | `~/bin/record-dot` | the red dot overlay, if you moved it |
-| `RECORD_AUDIO` | `~/bin/record-audio` | the CoreAudio helper, if you moved it |
-| `RECORD_CONFIG` | `~/.config/record/config` | the config file itself, read from the environment only, so setting it inside that file does nothing |
+| `RECORD_SCREEN` | `0` | which `Capture screen N` is recorded; `record screens` lists them |
+| `RECORD_MIC` | empty | microphone by name, exactly as ffmpeg lists it; empty resolves one on every start |
+| `RECORD_SYSTEM_AUDIO` | `1` | `0` records the microphone alone: on headphones, only your own voice |
+| `RECORD_AI` | `claude` | `claude`, `cursor`, `copilot`, or `0` for no call and no egress |
+| `RECORD_AI_VISION_MODEL` | empty | model that reads the frames; empty is the CLI's default |
+| `RECORD_AI_META_MODEL` | empty | model that writes title, tags and summary; empty is the CLI's default |
+| `RECORD_CLAUDE` | `1` | the old name of the off switch; `0` still means off |
+| `RECORD_DAYS` | `14` | this tool's own mp4 files older than this are deleted on the next start |
+| `RECORD_LAUNCH_APP` | empty | an app to open once the capture is up |
+| `RECORD_DOT`, `RECORD_AUDIO` | `~/bin/record-dot`, `~/bin/record-audio` | the two helpers, if you moved them |
+| `RECORD_CONFIG` | `~/.config/record/config` | the config file itself, read from the environment only |
 
-The switches turn off on `0`, `no`, `off` or `false`, in any case; anything
-else, a typo included, leaves the feature on. `RECORD_AI` is the one
-exception: a value that is not `claude`, `cursor` or `copilot` makes no call
-and the note names the value it found. `--with-blackhole` and
-`--with-handy` are install-time flags and belong on the `./install.sh` command
-line, or as `RECORD_INSTALL_BLACKHOLE=1` and `RECORD_INSTALL_HANDY=1` in the
-environment, never in this file.
+Switches turn off on `0`, `no`, `off` or `false`; anything else, a typo
+included, leaves the feature on. `RECORD_AI` is the exception: an unknown name
+makes no call and the note says which name it found.
 
-The cleanup on each start is bounded: top level of `RECORD_DIR` only, and only
-files named the way ffmpeg writes them here, `2026-05-14_09-30.mp4`. Subfolders
-are not descended into and a file this tool did not write is not matched. Give
-`RECORD_DIR` a directory of its own anyway. `RECORD_SCREEN` indexes ffmpeg's
-`Capture screen N` in `CGGetActiveDisplayList` order, 0 being the built-in panel
-on most Macs; `record screens` prints them and says which one has the dot.
+The cleanup on start is bounded to the top level of `RECORD_DIR` and to files
+named the way ffmpeg writes them, `2026-05-14_09-30.mp4`. Give it a directory
+of its own anyway.
 
-## Full call audio (BlackHole)
+## Full call audio
 
-With headphones the microphone hears only you: the other voices come out of the
-headphones and never reach the mic. BlackHole 2ch fixes that, and it is opt in:
-`./install.sh --with-blackhole`, or `brew install --cask blackhole-2ch` at any
-time later.
+On headphones the microphone hears only you. So every start also captures what
+the Mac is playing and mixes it into the same mono track at half the
+microphone's level. `record-audio`, one of the two Swift helpers, gets it from
+ScreenCaptureKit and streams it to ffmpeg over a FIFO: no loopback driver, no
+aggregate device, your output stays selected and the volume keys keep working.
+The audio is taken before the output mixer, so a muted headset still records
+the call.
 
-Once it is installed, every start builds two aggregates. **Record-Out** stacks
-your current output (AirPods, speakers, whatever is selected then) with
-BlackHole, so you hear everything as before and a copy goes down the virtual
-cable. **Record-In** is your input device plus BlackHole, and ffmpeg records
-that, so both sides of the call are captured in mono. The previous output is
-restored and both devices destroyed on every path that ends a session, including
-a start that failed halfway.
-
-**`RECORD_MIC` decides the microphone on every path, this one included.** The
-name you set is passed to `record-audio` as it builds the aggregates, so it
-picks the microphone side of Record-In. What ffmpeg opens is still `Record-In`,
-because that is the wrapper holding your microphone and the cable together.
-Left empty, `record-audio` resolves the microphone from CoreAudio instead: the
-input the Mac is set to record from, else a built-in microphone, else any other
-real one, never BlackHole and never one of its own aggregates. Set or empty,
-a start on this path prints the microphone it settled on, in the terminal and
-in `.record.log`, since `Record-In` names the wrapper and not the microphone
-inside it.
-
-`record-audio which` prints the same answer and touches nothing: it creates,
-destroys and selects no device, so it is safe to run mid-take. Run on its own it
-reads `RECORD_MIC` from your shell and not from `~/.config/record/config`, so
-pass the value to see what a start would do:
-`RECORD_MIC="Scarlett Solo" record-audio which`.
-
-While recording, the volume keys do not drive the multi-output device, so use
-the call app's own volume, and a forced shutdown can leave `Record-Out` as your
-output: recover with `~/bin/record-audio down`.
+`RECORD_SYSTEM_AUDIO=0` turns it off. If the capture cannot start, the take
+still starts with the microphone only and prints the helper's reason, kept in
+`$RECORD_DIR/.sysaudio.log`. The usual cause is a missing Screen Recording
+grant for whatever launched the start, skhd or your terminal.
 
 ## Privacy and consent
 
 Read this before you record a meeting.
 
-**What is captured.** One display at 1 fps, whatever is on it: messages, mail,
-credentials, other people's shared documents. No exclusion list, no pause. Plus
-the microphone, for the whole take.
-
-**What stays on the machine.** The mp4 files in `RECORD_DIR`, never uploaded by
-this tool, and the transcription, which whisper.cpp runs locally. The videos are
-kept out of the vault so they never reach iCloud.
-
-**What leaves the machine, and how to stop it.** One component, and it is
-optional: the AI CLI named by `RECORD_AI`. Per mp4 it sends 8 to 30 JPEG
-frames of your screen, scaled to 1400 px wide, to that CLI's vendor
-(Anthropic, Cursor or GitHub, and on to whichever model provider the vendor
-routes the chosen model to); once per session it sends the first 30000 bytes
-of the transcript plus those descriptions. A four-hour take is five calls, not
-two. **`RECORD_AI=0` in `~/.config/record/config` removes that entirely**: no
-call, no frames even extracted, nothing leaves the Mac. The note is still
-written, with the full transcript, a generic title and a line saying why the
-summary is missing. The full data flow is in [SECURITY.md](SECURITY.md).
-
-**Retention.** This tool's own mp4 files older than `RECORD_DAYS` (14 by
-default) are deleted on the next start. Notes are never deleted, nor are the
-videos if you never record again, so retention is not a guarantee.
-
-**Other people.** The microphone records everyone on the call and the capture
-records what they share. Recording other people is regulated and the rules
-differ by jurisdiction: some require all-party consent, some one-party, and
-processing the recording may put you under GDPR or an equivalent regime,
-including at work under your employer's policy. This is not legal advice and the
-tool has no compliance features. Telling people, and getting consent where it is
-required, is on you. Say it at the start of the call, or stop.
+- **Captured:** one display at 1 fps, whatever is on it, plus the microphone
+  and the system audio for the whole take. No exclusion list, no pause.
+- **Stays on the Mac:** the mp4 files and the transcription. Videos never
+  enter the vault, so they never reach iCloud.
+- **Leaves the Mac:** only the optional AI CLI call. Per mp4, 8 to 30 frames
+  of your screen; per session, the first 30000 bytes of the transcript. They
+  go to that CLI's vendor and on to its model provider. `RECORD_AI=0` removes
+  it entirely: no call, no frames extracted. Details in
+  [SECURITY.md](SECURITY.md).
+- **Retention:** this tool's own mp4 files older than `RECORD_DAYS` go on the
+  next start. Notes are never deleted.
+- **Other people:** the recording holds everyone on the call and what they
+  shared. Consent rules differ by jurisdiction and employer, and the tool has
+  no compliance features. Say you are recording, or stop.
 
 ## Troubleshooting
 
-**Option+R does nothing.** `launchctl list | grep skhd`, then
-`skhd --restart-service`. If it is running, the usual cause is a missing
-Accessibility grant for the skhd binary; next most likely, something else in
-your skhdrc already binds `alt - r`, which the installer reported and left
-alone.
-
-**"Did not start" notification.** The reason is in `$RECORD_DIR/.record.log`,
-whose last lines `record start` prints. A `command not found` there means skhd
-inherited a `PATH` without `/opt/homebrew/bin`: put a `PATH` export in
-`~/.config/record/config`, the one file Option+R reads.
-
-**The wrong microphone was recorded.** With the aggregates in use, the start
-already printed the microphone it put inside Record-In, in the terminal and in
-`.record.log`. Set `RECORD_MIC` to the one you want and it decides, with or
-without BlackHole. To see the answer before recording anything, run
-`RECORD_MIC="the name" record-audio which`: it resolves the way the aggregate
-build does and touches nothing.
-
-**"Cannot find any usable audio input."** Every input on the machine is a
-loopback or a virtual meeting device. Run
-`ffmpeg -f avfoundation -list_devices true -i ""` and copy the name of the one
-you want into `RECORD_MIC`. Its mirror, **"Cannot find the audio input named
-..."**, means that name matched nothing in that list. The comparison there is
-the whole name, taken literally and case-sensitively: `MacBook Pro Mic` and
-`macbook pro microphone` both miss `MacBook Pro Microphone`, and a `.` in the
-name is a full stop and not a wildcard. A renamed or unplugged interface
-therefore breaks it, and clearing `RECORD_MIC` resolves automatically again.
-`record-audio`, which picks the microphone inside Record-In, is looser: whole
-name ignoring case first, then the first input whose name merely contains what
-you wrote. A value can satisfy that one and still miss here, so copy the name
-out of the device list rather than typing it from memory.
-**"Cannot find Capture screen N."** is the same for displays, usually after
-unplugging a monitor: `record screens` lists what is there.
-
-**No red dot but the recording is running.** `record status` is the reliable
-answer to "am I recording". The overlay runs detached with its output discarded,
-so when `record-dot` gives up (it does, on a screen index with no `NSScreen`,
-which happens after a wake on an external monitor) its message goes nowhere.
-
-**No note appeared.** Transcription runs in the background after the stop; the
-log is `$RECORD_DIR/.transcribe.log`. `Whisper model missing at ...` means
-re-run `./install.sh`. A note titled `Recorded session` with no summary says
-why in its first lines: `RECORD_AI` is off, names a CLI this tool does not
-know, names one that is not installed, or names one that answered nothing. In
-the last case the CLI is usually not signed in, out of credit, or asked for a
-model it does not carry, and its own error line is in `.transcribe.log`.
-
-**The note exists but Obsidian does not show it.** `RECORD_NOTES` is not inside
-a vault, meaning no `.obsidian` directory above it. The stop says so in a
-notification and prints where it wrote the file: nothing is lost, and setting
-`RECORD_VAULT` to your vault root fixes the next one.
-
-**Audio output stuck on `Record-Out`.** After a crash the aggregate can survive:
-`~/bin/record-audio down`, then pick your output in Sound settings.
+| Symptom | Cause and fix |
+|---|---|
+| Option+R does nothing | `skhd --restart-service`. Then the Accessibility grant for skhd, or another binding on `alt - r` that the installer reported and left alone |
+| "Did not start" | The reason is in `$RECORD_DIR/.record.log`. A `command not found` means skhd's `PATH` lacks `/opt/homebrew/bin`: export it in `~/.config/record/config` |
+| Wrong microphone recorded | Every start prints the microphone it opened. Pin `RECORD_MIC` to the exact name from `ffmpeg -f avfoundation -list_devices true -i ""` and check with `record mic` |
+| "Cannot find the audio input named ..." | `RECORD_MIC` is compared whole, literally and case-sensitively. Copy the name from the device list |
+| "Cannot find Capture screen N" | Usually a monitor was unplugged. `record screens` lists what is there |
+| "System audio unavailable" | The helper could not start; its reason is in `$RECORD_DIR/.sysaudio.log`. Almost always the Screen Recording grant for skhd or your terminal. The take still runs, microphone only |
+| No red dot, recording running | `record status` is the reliable answer. The overlay runs detached and can give up silently after a wake on an external monitor |
+| No note appeared | The log is `$RECORD_DIR/.transcribe.log`. `Whisper model missing` means re-run `./install.sh`. A note titled `Recorded session` says in its first lines why the summary is missing |
+| Note exists, Obsidian does not show it | `RECORD_NOTES` is outside any vault (no `.obsidian` above it). The stop said so and printed the path; set `RECORD_VAULT` |
+| Output stuck on `Record-Out` | Only after upgrading from a version before 0.3: `~/bin/record-audio down`, then pick your output in Sound settings |
 
 ## Uninstall
-
-Stop any running take first, so the audio devices are torn down and the output
-is restored:
 
 ```bash
 record stop
 ./scripts/uninstall.sh
 ```
 
-It prints the plan and asks before it removes anything (`--yes` skips the
-question), and it refuses to run at all while a recording is live. It removes
-the four files from `~/bin` and the `~/.config/skhd/lightweight-rec.skhdrc`
-fragment, drops the single `.load` line `install.sh` appended to your own skhdrc
-and leaves every other binding in it, and tears down Record-In and Record-Out.
-Both skhd files are copied to a timestamped `.bak` before they change, and
-`~/.config/skhd/skhdrc` itself is removed only when it holds this tool's binding
-and nothing else.
-
-Your videos, notes, vault, whisper model (574 MB, in `$RECORD_DIR/.whisper`),
-config, the `PATH` line in `~/.zshrc` and the Homebrew packages are all left in
-place on purpose. The script ends by listing them with their sizes, and prints a
-removal command only for the paths it considers safe to name. Read that list
-before pasting anything from it: the recordings hold other people's voices.
+It prints the plan and asks before removing anything (`--yes` skips the
+question), and refuses to run while a take is live. It removes the four files
+from `~/bin`, the skhd fragment and the single `.load` line it appended to your
+skhdrc, after timestamped backups, and any Record-In or Record-Out device a
+version before 0.3 left. Videos, notes, vault, whisper model, config, the
+`PATH` line and the Homebrew packages stay; the script lists them and prints a
+removal command only for the paths it is safe to name.
 
 ## Cost and footprint
 
@@ -408,44 +285,38 @@ before pasting anything from it: the recordings hold other people's voices.
 |---|---|---|
 | Video bitrate | 200 kbit/s video, 48 kbit/s audio | `-b:v 200k -b:a 48k` in `record` |
 | Per recorded hour | about 110 MB | 248 kbit/s over 3600 s |
-| An 8-hour day | about 0.9 GB | estimate, 8 x 110 MB |
+| An 8-hour day | about 0.9 GB | estimate |
 | Steady state at 14 days | about 12 GB | estimate, 8-hour days, default retention |
 | Whisper model | 574 MB, once | `ggml-large-v3-turbo-q5_0.bin` |
-| CPU while recording | encoding runs on the video hardware, not the CPU | `hevc_videotoolbox` |
-| Transcription | local, one pass per mp4 | whisper.cpp |
-| AI calls per session | 1 per mp4 for the frames, 1 per session for the metadata, 0 with `RECORD_AI=0` | `record`, transcribe path |
-| Frames sent per mp4 | 8 minimum, 30 maximum, spread over the whole file | `FRAME_MIN`, `FRAME_MAX` |
+| CPU while recording | near zero, encoding is on the video hardware | `hevc_videotoolbox` |
+| AI calls per session | 1 per mp4 for the frames, 1 for the metadata, 0 with `RECORD_AI=0` | `record`, transcribe path |
+| Frames sent per mp4 | 8 to 30, spread over the file, 1400 px wide | `FRAME_MIN`, `FRAME_MAX` |
 | Transcript sent | first 30000 bytes | `head -c 30000` before the metadata call |
 
-Those calls are billed by the CLI's own plan: Claude Code's usage limits or API
-credit, Cursor's request pricing, Copilot's premium requests. On Anthropic API
-credit the dominant term is the 30 images per recorded hour at 1400 px, which
-at current pricing lands between a few cents and roughly twenty cents an hour;
-a Flash-class model through Copilot or Cursor is cheaper per image. Estimates,
-not measurements, and `RECORD_AI=0` makes it zero.
+The AI calls are billed by the CLI's own plan. On Anthropic API credit the
+frames dominate and land between a few cents and roughly twenty cents per
+recorded hour; a Flash-class model through Copilot or Cursor is cheaper. These
+are estimates, and `RECORD_AI=0` makes it zero.
 
 ## Components
 
 | Piece | Role |
 |---|---|
 | `record` (this repo) | orchestrates capture, overlay, transcript and note |
-| `record-lib.sh` (this repo) | device-list parsing, mic resolution, vault detection, covered by the tests |
+| `record-lib.sh` (this repo) | device-list parsing, mic resolution, vault detection; covered by the tests |
 | `record-dot` (this repo) | red recording dot on the captured display |
-| `record-audio` (this repo) | CoreAudio aggregates for mic plus system audio, and `which` |
-| [ffmpeg](https://ffmpeg.org) | captures screen and microphone, extracts frames |
+| `record-audio` (this repo) | system audio via ScreenCaptureKit, streamed to ffmpeg over a FIFO; `down` cleans up after versions before 0.3 |
+| [ffmpeg](https://ffmpeg.org) | screen and microphone capture, the audio mix, frame extraction |
 | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | local transcription |
-| [skhd](https://github.com/koekeishiya/skhd) | binds Option+R to the script |
-| [switchaudio-osx](https://github.com/deweller/switchaudio-osx) | switches and restores the system output |
-| [BlackHole](https://github.com/ExistentialAudio/BlackHole) | optional loopback driver for full call audio, installed only with `--with-blackhole` |
-| [Handy](https://github.com/cjpais/handy) | push-to-talk dictation by another author, unrelated to the capture. Installed only with `--with-handy`, launched only if named in `RECORD_LAUNCH_APP` |
-| `claude`, `cursor-agent` or `copilot` | title, tags, summary, screen description, whichever `RECORD_AI` names: the only non-local, paid piece, and the only one that is off with a single config line |
-| `docs/gen-svg.py` (this repo) | regenerates the three animated SVGs above, standard library only: `python3 docs/gen-svg.py docs` |
+| [skhd](https://github.com/koekeishiya/skhd) | binds Option+R |
+| [Handy](https://github.com/cjpais/handy) | unrelated dictation app, installed only with `--with-handy` |
+| `claude`, `cursor-agent` or `copilot` | title, tags, summary, screen description: the only paid, off-machine piece |
+| `docs/gen-svg.py` (this repo) | regenerates the SVGs above: `python3 docs/gen-svg.py docs` |
 
 ## Contributing and license
 
-Scope, the test suite, the shellcheck gate and what must be exercised by hand on
-a real Mac are in [CONTRIBUTING.md](CONTRIBUTING.md); released changes are in
-[CHANGELOG.md](CHANGELOG.md). This code is MIT, see [LICENSE](LICENSE).
-ffmpeg, whisper.cpp, skhd, BlackHole, Handy and the rest are separate
-upstream projects: they are not vendored here, and their licenses are in
-[THIRD_PARTY.md](THIRD_PARTY.md).
+Scope, the test suite, the shellcheck gate and what must be exercised by hand
+on a real Mac are in [CONTRIBUTING.md](CONTRIBUTING.md); released changes in
+[CHANGELOG.md](CHANGELOG.md). MIT, see [LICENSE](LICENSE). ffmpeg,
+whisper.cpp, skhd and Handy are separate upstream projects, not vendored here;
+their licenses are in [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -6,9 +6,11 @@
 #   record status   running or not, and how much disk the videos use
 #   record toggle   start if idle, stop if running: this is Option+R (skhd)
 #   record screens  list displays; the red dot is what you are recording
+#   record mic      which microphone the next start records from
 #
-# What runs where: capture (ffmpeg), the red dot overlay and the transcription
-# (whisper.cpp) all run on this Mac, offline and at no cost. One thing does
+# What runs where: capture (ffmpeg for the screen and the microphone,
+# record-audio for what the Mac plays), the red dot overlay and the
+# transcription (whisper.cpp) all run on this Mac, offline and at no cost. One thing does
 # not: the optional AI CLI named by RECORD_AI (claude, cursor or copilot),
 # which sends the transcript and a few screen frames to its vendor and needs
 # that vendor's paid plan. It is not required, and RECORD_AI=0 turns it off
@@ -46,7 +48,7 @@ MODEL="$DIR/.whisper/ggml-large-v3-turbo-q5_0.bin"
 VAULT="${RECORD_VAULT:-$HOME/Documents/Obsidian}"
 NOTES="${RECORD_NOTES:-$VAULT/Recordings}"
 DOT="${RECORD_DOT:-$HOME/bin/record-dot}"
-AUDIO_HELPER="${RECORD_AUDIO:-$HOME/bin/record-audio}"
+AUDIO_HELPER="${RECORD_AUDIO:-$HOME/bin/record-audio}"  # system audio capture
 SCREEN="${RECORD_SCREEN:-0}"    # ffmpeg "Capture screen N"; red dot follows this
 MIC="${RECORD_MIC:-}"           # empty: resolve the input device on every start
 # The switches that are on unless the user says otherwise. Read once here so
@@ -60,7 +62,7 @@ AI="${RECORD_AI:-claude}"
 is_off "${RECORD_CLAUDE:-1}" && AI=0
 AI_VISION_MODEL="${RECORD_AI_VISION_MODEL:-}"  # empty: the CLI's own default, see ai_defaults
 AI_META_MODEL="${RECORD_AI_META_MODEL:-}"
-SYSTEM_AUDIO="${RECORD_SYSTEM_AUDIO:-1}" # off: no BlackHole aggregate, RECORD_MIC wins
+SYSTEM_AUDIO="${RECORD_SYSTEM_AUDIO:-1}" # off: the microphone alone, nothing the Mac plays
 LAUNCH_APP="${RECORD_LAUNCH_APP:-}"   # empty: this tool opens no other app
 DAYS="${RECORD_DAYS:-14}"       # mp4 files older than this are deleted on start
 MIN_SECS=20      # a toggle this young cannot stop: it is a double tap
@@ -68,6 +70,13 @@ FRAME_MIN=8      # frames read per video, even on very short clips
 FRAME_MAX=30     # cap: more frames cost and add nothing
 LOCK_STALE=120   # a .lock older than this is leftover, not a live start
 DOTPID="$DIR/.dot.pid"
+# The system audio helper streams raw PCM into this FIFO and ffmpeg reads it
+# as a second input. The .ready file is the helper's "capture is up" signal;
+# the pid and the log are for stopping it and for saying why it did not start.
+SYSFIFO="$DIR/.sysaudio.fifo"
+SYSREADY="$DIR/.sysaudio.ready"
+SYSPID="$DIR/.sysaudio.pid"
+SYSLOG="$DIR/.sysaudio.log"
 
 # The only files this tool may delete. RECORD_DIR can point anywhere, so the
 # cleanup matches the exact shape ffmpeg writes (-strftime %Y-%m-%d_%H-%M.mp4)
@@ -221,15 +230,35 @@ hide_dot() {
   pkill -f "record-dot on" 2>/dev/null || true
 }
 
-# Sound has to come back even when the take never really started: a start that
-# died between "switch output to Record-Out" and "ffmpeg is up" leaves the Mac
-# playing into an aggregate nobody listens to, and only a stop can undo it.
-restore_audio() {
-  if [ -f "$DIR/.previous-output" ]; then
-    switchaudiosource -s "$(cat "$DIR/.previous-output")" -t output >/dev/null 2>&1 || true
-    rm -f "$DIR/.previous-output"
+# The system audio helper streams into the FIFO for as long as ffmpeg reads
+# it and dies on its own when ffmpeg goes. This covers every other path: a
+# start that failed after the helper came up, a stop that found no ffmpeg, a
+# helper left over from a crash. Idempotent, and quiet when there is nothing.
+stop_sysaudio() {
+  if [ -f "$SYSPID" ]; then
+    kill "$(tr -d '[:space:]' < "$SYSPID")" 2>/dev/null || true
+    rm -f "$SYSPID"
   fi
-  [ -x "$AUDIO_HELPER" ] && { "$AUDIO_HELPER" down >/dev/null 2>&1 || true; }
+  pkill -f "$AUDIO_HELPER capture" 2>/dev/null || true
+  rm -f "$SYSFIFO" "$SYSREADY"
+}
+
+# Versions up to 0.2 recorded system audio through BlackHole and two aggregate
+# devices, and switched the Mac's output to one of them for the take. A Mac
+# upgraded with a take running, or one that crashed on the old version, can
+# still be playing into that device, with the real output's name in
+# .previous-output. Put it back once, then forget the file.
+legacy_audio_cleanup() {
+  [ -f "$DIR/.previous-output" ] || return 0
+  if [ -x "$AUDIO_HELPER" ]; then
+    "$AUDIO_HELPER" down "$(cat "$DIR/.previous-output")" >/dev/null 2>&1 || true
+  fi
+  rm -f "$DIR/.previous-output"
+}
+
+stop_audio() {
+  stop_sysaudio
+  legacy_audio_cleanup
   return 0
 }
 
@@ -283,7 +312,7 @@ case "$cmd" in
       if [ -z "$pid_ff" ] || ! kill -0 "$pid_ff" 2>/dev/null; then
         pid_ff=$(pgrep -f "avfoundation.*$DIR" | head -1)
       fi
-      [ -n "$pid_ff" ] || { echo "Cannot find the recording process."; rm -f "$PIDFILE"; hide_dot; restore_audio; exit 1; }
+      [ -n "$pid_ff" ] || { echo "Cannot find the recording process."; rm -f "$PIDFILE"; hide_dot; stop_audio; exit 1; }
       kill -INT "$pid_ff"
       # wait until ffmpeg actually writes the moov atom, not a guessed sleep:
       # a long file can take more than 2 seconds and the video stays broken
@@ -294,7 +323,7 @@ case "$cmd" in
       kill -0 "$pid_ff" 2>/dev/null && { sleep 2; kill -9 "$pid_ff" 2>/dev/null || true; }
       rm -f "$PIDFILE"
       hide_dot
-      restore_audio
+      stop_audio
       echo "Recording stopped. Files are in $DIR"
       nohup "$0" transcribe >"$DIR/.transcribe.log" 2>&1 &
       echo "Transcribing in the background: the note will appear in the vault, Recordings/"
@@ -303,7 +332,7 @@ case "$cmd" in
       echo "Not recording."
       rm -f "$PIDFILE"
       hide_dot
-      restore_audio
+      stop_audio
     fi
     ;;
 
@@ -312,6 +341,11 @@ case "$cmd" in
       echo "Recording (pid $(cat "$PIDFILE" 2>/dev/null || pgrep -f "avfoundation.*$DIR" | head -1))."
       label=$(screen_label)
       [ -n "$label" ] && echo "Screen $SCREEN: $label"
+      if [ -f "$SYSPID" ] && kill -0 "$(tr -d '[:space:]' < "$SYSPID")" 2>/dev/null; then
+        echo "Audio: microphone + system audio (record-audio pid $(tr -d '[:space:]' < "$SYSPID"))"
+      else
+        echo "Audio: microphone only"
+      fi
     else
       echo "Idle."
     fi
@@ -351,6 +385,36 @@ case "$cmd" in
     echo
     echo "To record the other display: RECORD_SCREEN=1 record toggle"
     echo "Or export RECORD_SCREEN in ~/.zshrc."
+    ;;
+
+  mic)
+    # The same resolution a start does, and nothing else: no device is opened,
+    # so it is safe mid-take. Reads RECORD_MIC from the config file like a
+    # start would, which is the point of asking here and not ffmpeg.
+    LIST=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
+    if [ -n "$MIC" ]; then
+      idx=$(parse_audio_index "$LIST" "$MIC")
+      if [ -z "$idx" ]; then
+        echo "RECORD_MIC is \"$MIC\" and no audio input on this Mac has that name."
+        echo "It has to match one of these EXACTLY, spaces and capitals included:"
+        echo "$LIST" | sed -n '/audio devices:/,$p' | grep '^\[AVFoundation' | grep -v 'audio devices:' | sed 's/^/  /'
+        exit 1
+      fi
+      echo "$(audio_name_at "$LIST" "$idx")  (RECORD_MIC, ffmpeg audio [$idx])"
+    else
+      idx=$(resolve_audio_index "$LIST")
+      if [ -z "$idx" ]; then
+        echo "No usable audio input: every input on this Mac is a loopback or a"
+        echo "virtual meeting device. Set RECORD_MIC in $CONFIG."
+        exit 1
+      fi
+      echo "$(audio_name_at "$LIST" "$idx")  (resolved on every start, ffmpeg audio [$idx])"
+    fi
+    if is_off "$SYSTEM_AUDIO"; then
+      echo "System audio: off (RECORD_SYSTEM_AUDIO), so on a call only your own voice."
+    else
+      echo "System audio: what the Mac plays, captured by record-audio and mixed in."
+    fi
     ;;
 
   transcribe)
@@ -618,59 +682,27 @@ $descr
       echo "Cleanup: deleted $found videos older than $DAYS days."
     fi
 
-    # full audio: if BlackHole is present, create "Record-In" (mic + BlackHole)
-    # and "Record-Out" (current output + BlackHole) on the fly, so a call
-    # captures the other voices too, AirPods or not. Current output is read
-    # now, not configured in advance: AirPods at the office, speakers at home.
-    # Without BlackHole it degrades to microphone only.
     # The log belongs to this start and nothing else: truncated here, appended
     # to from here on, so `tail` after a failure never shows a previous run.
     : > "$DIR/.record.log"
 
-    INGRESS="$MIC"
-    FILTER=(-ac 1)
-    if is_off "$SYSTEM_AUDIO"; then
-      echo "System audio is off (RECORD_SYSTEM_AUDIO): recording the microphone only."
-    # RECORD_MIC has to be EXPORTED to reach record-audio. It arrives here
-    # from `. "$CONFIG"` as a plain shell variable, so a bare call left the
-    # helper with an empty environment and it built Record-In on CoreAudio's
-    # default input instead of the device the user named, silently.
-    elif PREV=$(RECORD_MIC="$MIC" "$AUDIO_HELPER" up 2>/dev/null) && [ -n "$PREV" ]; then
-      echo "$PREV" > "$DIR/.previous-output"
-      switchaudiosource -s "Record-Out" -t output >/dev/null 2>&1 || true
-      INGRESS="Record-In"
-      # aggregate channels: 0 = mic, 1-2 = system audio via BlackHole
-      FILTER=(-filter:a "pan=mono|c0=c0+0.5*c1+0.5*c2")
-      # Say which microphone is inside the aggregate rather than leaving the
-      # user to guess: "Record-In" names the wrapper, not the device, and the
-      # whole point of RECORD_MIC is knowing that it took effect. `which` is
-      # read-only, it resolves the same way `up` just did and touches nothing.
-      # The fallback sits OUTSIDE the substitution on purpose. Inside it, the
-      # helper's exit status is discarded and only its stdout survives, so an
-      # older record-audio without `which` printed its usage line to stdout,
-      # exited 1, and the start line read "Full audio: Usage: record-audio
-      # up|down + system audio". Guarding on the status covers every failure.
-      IN_MIC=$(RECORD_MIC="$MIC" "$AUDIO_HELPER" which 2>/dev/null) || IN_MIC=""
-      echo "Full audio: ${IN_MIC:-microphone} + system audio (previous output: $PREV)"
-    fi
-
     # device indices change (iPhone plugged in, OBS...): resolve by name
-    # on every start, AFTER creating Record-In
+    # on every start
     LIST=$(ffmpeg -f avfoundation -list_devices true -i "" 2>&1 || true)
     VIDEO=$(parse_capture_index "$LIST" "$SCREEN")
-    # An exact name (RECORD_MIC, or Record-In when the aggregate exists) is
-    # matched as given. Otherwise the input is resolved from the device list:
-    # the built-in microphone is named after the Mac model, so no single
-    # hardcoded string can be right on more than one machine.
-    if [ -n "$INGRESS" ]; then
-      AUDIO=$(parse_audio_index "$LIST" "$INGRESS")
+    # An exact name (RECORD_MIC) is matched as given. Otherwise the input is
+    # resolved from the device list: the built-in microphone is named after
+    # the Mac model, so no single hardcoded string can be right on more than
+    # one machine.
+    if [ -n "$MIC" ]; then
+      AUDIO=$(parse_audio_index "$LIST" "$MIC")
     else
       AUDIO=$(resolve_audio_index "$LIST")
     fi
     if [ -z "$VIDEO" ] || [ -z "$AUDIO" ]; then
       [ -z "$VIDEO" ] && echo "Cannot find Capture screen $SCREEN (see: record screens)."
       if [ -z "$AUDIO" ]; then
-        if [ -n "$MIC" ] && [ "$INGRESS" = "$MIC" ]; then
+        if [ -n "$MIC" ]; then
           # The name the user typed, quoted, because this failure is almost
           # always a near miss: a shortened name, a missing word, the wrong
           # capital. The device lookup used to accept a prefix and hand ffmpeg
@@ -682,8 +714,6 @@ $descr
           echo "picks the microphone itself."
           echo "To see the names again at any time:"
           echo "  ffmpeg -f avfoundation -list_devices true -i \"\""
-        elif [ -n "$INGRESS" ]; then
-          echo "Cannot find the audio input named \"$INGRESS\"."
         else
           echo "Cannot find any usable audio input. Set RECORD_MIC to the exact"
           echo "device name from the list below, in $CONFIG."
@@ -692,14 +722,59 @@ $descr
       echo "Devices seen:"
       # `|| echo` is not cosmetic: a bare pipeline here exits 1 under set -e
       # when ffmpeg is broken and lists nothing, and the script would die on
-      # this line, never reaching restore_audio below. That leaves the Mac
-      # playing into the Record-Out aggregate with only "Did not start" on
-      # screen, and ffmpeg missing from skhd's PATH is a documented first-run
-      # failure, so this is the likely path, not the exotic one.
+      # this line with only "Did not start" on screen. ffmpeg missing from
+      # skhd's PATH is a documented first-run failure, so this is the likely
+      # path, not the exotic one.
       echo "$LIST" | grep '^\[AVFoundation' || echo "  (none: ffmpeg listed no AVFoundation device at all)"
       hide_dot
-      restore_audio
       exit 1
+    fi
+    MIC_NAME=$(audio_name_at "$LIST" "$AUDIO")
+
+    # System audio: what the Mac plays, the other side of a call included.
+    # record-audio captures it natively (ScreenCaptureKit) and streams it into
+    # a FIFO that ffmpeg reads as a second input. Nothing is routed, no device
+    # is switched, the volume keys keep working. The helper touches
+    # .sysaudio.ready once the capture is up and a helper that fails exits
+    # before that, so waiting on the file tells "ready" from "failed" without
+    # guessing. Either way the recording starts: without system audio it is
+    # the microphone alone, and the reason is in .sysaudio.log and below.
+    stop_sysaudio
+    SYS_INPUT=()
+    if is_off "$SYSTEM_AUDIO"; then
+      echo "System audio is off (RECORD_SYSTEM_AUDIO): recording the microphone only."
+    elif [ ! -x "$AUDIO_HELPER" ]; then
+      echo "record-audio is not at $AUDIO_HELPER: recording the microphone only. Run ./install.sh to build it."
+    else
+      mkfifo "$SYSFIFO"
+      : > "$SYSLOG"
+      nohup "$AUDIO_HELPER" capture "$SYSFIFO" --ready "$SYSREADY" >>"$SYSLOG" 2>&1 &
+      echo $! > "$SYSPID"
+      for _ in $(seq 1 50); do
+        [ -f "$SYSREADY" ] && break
+        kill -0 "$(cat "$SYSPID")" 2>/dev/null || break
+        sleep 0.1
+      done
+      if [ -f "$SYSREADY" ]; then
+        SYS_INPUT=(-thread_queue_size 1024 -f f32le -ar 48000 -ac 2 -i "$SYSFIFO")
+      else
+        echo "System audio unavailable, recording the microphone only. record-audio said:"
+        tail -3 "$SYSLOG" 2>/dev/null | sed 's/^/  /'
+        stop_sysaudio
+      fi
+    fi
+    if [ "${#SYS_INPUT[@]}" -gt 0 ]; then
+      # Mono out: the microphone at full level plus system audio at half, the
+      # balance the old BlackHole mix had. aresample=async lets the microphone
+      # clock drift against the pipe without the mixer stalling or the two
+      # tracks sliding apart over an hour. duration=first: the take ends when
+      # the microphone input does, and a helper that dies early only costs
+      # the system audio from that moment on.
+      MIX=(-filter_complex "[0:a]aresample=async=1,aformat=channel_layouts=mono[mic];[1:a]aformat=channel_layouts=mono[sys];[mic][sys]amix=inputs=2:duration=first:weights='1 0.5':normalize=0[a]" -map 0:v -map "[a]")
+      echo "Audio: $MIC_NAME + system audio"
+    else
+      MIX=(-ac 1)
+      echo "Audio: $MIC_NAME only"
     fi
 
     touch "$SESSION"
@@ -710,10 +785,13 @@ $descr
 
     # capture at 5 fps (the driver rejects 1 fps), keep 1 fps on the way out.
     # hardware HEVC: CPU near zero. One file per hour, name = date and time.
+    # The FIFO input is spliced in only when the helper came up: on bash 3.2
+    # an empty array expanded under set -u is an error, hence the idiom.
     nohup ffmpeg -hide_banner -loglevel error -nostdin \
-      -f avfoundation -framerate 5 -capture_cursor 1 -i "${VIDEO}:${AUDIO}" \
+      -thread_queue_size 1024 -f avfoundation -framerate 5 -capture_cursor 1 -i "${VIDEO}:${AUDIO}" \
+      ${SYS_INPUT[@]+"${SYS_INPUT[@]}"} \
       -r 1 -c:v hevc_videotoolbox -b:v 200k -tag:v hvc1 \
-      -c:a aac "${FILTER[@]}" -b:a 48k \
+      -c:a aac "${MIX[@]}" -b:a 48k \
       -f segment -segment_time 3600 -reset_timestamps 1 -strftime 1 \
       "$DIR/%Y-%m-%d_%H-%M.mp4" \
       >>"$DIR/.record.log" 2>&1 &
@@ -730,9 +808,8 @@ $descr
 
     if running; then
       # Only now, with the capture confirmed: a missing app used to abort the
-      # start under set -e, after the output had already been switched to
-      # Record-Out, and the sound stayed on a phantom device. Optional by
-      # default, opt in with RECORD_LAUNCH_APP in the config file.
+      # start under set -e with the capture half set up. Optional by default,
+      # opt in with RECORD_LAUNCH_APP in the config file.
       if [ -n "$LAUNCH_APP" ]; then
         if open -a "$LAUNCH_APP" >/dev/null 2>&1; then
           echo "Opened $LAUNCH_APP."
@@ -741,11 +818,11 @@ $descr
         fi
       fi
       label=$(screen_label)
-      echo "Recording: ${label:-screen $SCREEN} at 1 fps + microphone, one file per hour in $DIR"
+      echo "Recording: ${label:-screen $SCREEN} at 1 fps, one file per hour in $DIR"
       echo "Red dot is on that display. To stop (and transcribe): record stop"
     else
       hide_dot
-      restore_audio
+      stop_audio
       echo "ffmpeg did not start. Last lines of the log:"
       tail -5 "$DIR/.record.log"
       if grep -qiE "not permitted|permission|denied|TCC" "$DIR/.record.log" 2>/dev/null; then
@@ -759,7 +836,7 @@ $descr
     ;;
 
   *)
-    echo "Usage: record [start|stop|status|toggle|screens|transcribe]"
+    echo "Usage: record [start|stop|status|toggle|screens|mic|transcribe]"
     exit 1
     ;;
 esac

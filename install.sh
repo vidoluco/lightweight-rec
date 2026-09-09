@@ -2,8 +2,6 @@
 # Rebuild the toolchain on a new Mac. Idempotent: running it again is safe.
 #
 #   ./install.sh                  everything this tool needs, and nothing else
-#   ./install.sh --with-blackhole also add BlackHole, the loopback driver that
-#                                 gets the other side of a call into the recording
 #   ./install.sh --with-handy     also add Handy, an optional dictation app
 #   ./install.sh --help           print this header
 #
@@ -16,14 +14,16 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-WITH_BLACKHOLE="${RECORD_INSTALL_BLACKHOLE:-0}"
 WITH_HANDY="${RECORD_INSTALL_HANDY:-0}"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --with-blackhole) WITH_BLACKHOLE=1 ;;
     --with-handy) WITH_HANDY=1 ;;
-    -h|--help) sed -n '2,14p' "$0" | sed 's/^#\{1,\} \{0,1\}//'; exit 0 ;;
-    *) echo "Unknown option: $1"; echo "Usage: install.sh [--with-blackhole] [--with-handy]"; exit 1 ;;
+    # Accepted and ignored, so a note or a script written for 0.2 still runs:
+    # since 0.3 the other side of a call is captured natively and there is no
+    # driver to install.
+    --with-blackhole) echo "BlackHole is no longer used: system audio is captured natively. Ignoring --with-blackhole." ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^#\{1,\} \{0,1\}//'; exit 0 ;;
+    *) echo "Unknown option: $1"; echo "Usage: install.sh [--with-handy]"; exit 1 ;;
   esac
   shift
 done
@@ -46,7 +46,15 @@ preflight_fail() {
 ok_line() { printf '  %-10s %s\n' "$1" "$2"; }
 
 if [ "$(uname -s)" = "Darwin" ]; then
-  ok_line macOS "$(sw_vers -productVersion 2>/dev/null || echo 'version unknown')"
+  MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null || echo 0)"
+  ok_line macOS "$MACOS_VERSION"
+  # System audio comes from ScreenCaptureKit, which learned to capture audio
+  # in macOS 13. record-audio.swift will not compile against an older SDK,
+  # so say it here rather than as a compiler error halfway through.
+  if [ "${MACOS_VERSION%%.*}" -lt 13 ] 2>/dev/null; then
+    preflight_fail "macOS 13 or newer is needed: the system audio helper is built on ScreenCaptureKit." \
+      "This Mac runs $MACOS_VERSION. Update macOS, then run this script again."
+  fi
 else
   preflight_fail "this tool is macOS only: it is built on avfoundation, CoreAudio and skhd." \
     "uname says $(uname -s). There is nothing here that runs on it."
@@ -115,27 +123,6 @@ echo "== brew dependencies =="
 brew list ffmpeg      >/dev/null 2>&1 || brew install ffmpeg
 brew list whisper-cpp >/dev/null 2>&1 || brew install whisper-cpp
 brew list skhd        >/dev/null 2>&1 || brew install koekeishiya/formulae/skhd
-brew list switchaudio-osx >/dev/null 2>&1 || brew install switchaudio-osx
-
-# BlackHole is a system audio driver: installing it needs an admin password and
-# loads a kernel-adjacent HAL plugin. The tool records perfectly well without
-# it, so the same rule that governs Handy governs it: nothing this tool can run
-# without gets installed unless you asked for it.
-echo "== BlackHole, optional and off by default =="
-if brew list --cask blackhole-2ch >/dev/null 2>&1; then
-  echo "  already installed: calls are recorded with both sides of the audio."
-elif [ "$WITH_BLACKHOLE" = "1" ]; then
-  if brew install --cask blackhole-2ch; then
-    echo "  installed. Calls are recorded with both sides of the audio."
-  else
-    echo "  WARN: BlackHole did not install; on a call only your own voice will be recorded."
-  fi
-else
-  echo "  skipped. Without it, on headphones only your own voice is recorded: the"
-  echo "  other people come out of the headphones and never reach the microphone."
-  echo "  It is an audio driver, so it asks for your admin password. Add it with:"
-  echo "    ./install.sh --with-blackhole  (or RECORD_INSTALL_BLACKHOLE=1 ./install.sh)"
-fi
 
 echo "== Handy, optional and off by default =="
 if [ "$WITH_HANDY" = "1" ]; then
@@ -149,9 +136,29 @@ else
   echo "    ./install.sh --with-handy      (or RECORD_INSTALL_HANDY=1 ./install.sh)"
 fi
 
-echo "== CoreAudio helper (record-audio) =="
+echo "== system audio helper (record-audio) =="
 mkdir -p "$HOME/bin"
-swiftc -O -o "$HOME/bin/record-audio" "$HERE/record-audio.swift" -framework CoreAudio
+swiftc -O -o "$HOME/bin/record-audio" "$HERE/record-audio.swift" \
+  -framework ScreenCaptureKit -framework CoreMedia -framework CoreAudio
+
+# Versions up to 0.2 recorded system audio through BlackHole and two aggregate
+# devices, Record-In and Record-Out, and could leave the Mac's output switched
+# to one of them after a crash. One pass with the new helper removes both and
+# puts the output back where the old state file says it was. Nothing to do on
+# a fresh Mac, and it says nothing then.
+PREVIOUS_OUTPUT=""
+[ -f "$DIR/.previous-output" ] && PREVIOUS_OUTPUT="$(cat "$DIR/.previous-output")"
+if [ -n "$PREVIOUS_OUTPUT" ]; then
+  "$HOME/bin/record-audio" down "$PREVIOUS_OUTPUT" 2>&1 | sed 's/^/  /' || true
+  echo "  sound output asked back to \"$PREVIOUS_OUTPUT\", where 0.2 left it"
+else
+  "$HOME/bin/record-audio" down 2>&1 | sed 's/^/  /' || true
+fi
+rm -f "$DIR/.previous-output"
+if brew list --cask blackhole-2ch >/dev/null 2>&1; then
+  echo "  BlackHole 2ch is installed and no longer used by this tool. If nothing"
+  echo "  else needs it:  brew uninstall --cask blackhole-2ch"
+fi
 
 echo "== recording-dot overlay (record-dot) =="
 swiftc -O -o "$HOME/bin/record-dot" "$HERE/record-dot.swift" -framework AppKit
@@ -385,7 +392,8 @@ fi
 echo
 echo "Done. Remaining permissions, once (System Settings > Privacy and Security):"
 echo "  1. Accessibility      -> $(command -v skhd || echo skhd)"
-echo "  2. Screen Recording   -> skhd (macOS asks on the first Option+R)"
+echo "  2. Screen Recording   -> skhd (macOS asks on the first Option+R; it also"
+echo "                           covers the system audio capture, no extra grant)"
 echo "  3. Microphone         -> skhd"
 echo
 echo "Defaults: videos in $DIR, notes in $NOTES"
@@ -393,7 +401,7 @@ echo "Edit $CONFIG to change paths, the display, the microphone, retention,"
 echo "or the app Option+R brings up with the recording."
 echo "The hotkey itself is in $FRAGMENT"
 echo "List displays with: record screens"
-echo "Check which microphone will be recorded with: record-audio which"
+echo "Check which microphone will be recorded with: record mic"
 
 # The note is written whether or not a vault is there, and a folder full of
 # Markdown that Obsidian never shows looks exactly like a tool that did not

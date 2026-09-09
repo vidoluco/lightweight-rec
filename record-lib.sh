@@ -71,8 +71,9 @@ resolve_audio_index() {
   #   2. any other real microphone (an external USB or interface one)
   #   3. the first remaining input
   # Loopback drivers (BlackHole and friends), meeting-app virtual devices and
-  # the Record-In / Record-Out aggregates this tool creates are never picked:
-  # on their own they carry no voice. Prints nothing when there is no input.
+  # the Record-In / Record-Out aggregates versions up to 0.2 of this tool
+  # created are never picked: on their own they carry no voice. Prints
+  # nothing when there is no input.
   printf '%s\n' "$1" | awk '
     /AVFoundation video devices:/ { audio = 0; next }
     /AVFoundation audio devices:/ { audio = 1; next }
@@ -95,6 +96,29 @@ resolve_audio_index() {
       if (have_builtin) print builtin
       else if (have_mic) print mic
       else if (have_first) print first
+    }
+  '
+}
+
+audio_name_at() {
+  # $1 = ffmpeg -list_devices stderr, $2 = an index in the audio list
+  # Prints the name ffmpeg lists at that index, the inverse of
+  # parse_audio_index, so a start can say which microphone it opened instead
+  # of a bare number. Prints nothing for an index that is not in the list.
+  printf '%s\n' "$1" | RECORD_LIB_WANT="$2" awk '
+    BEGIN { want = ENVIRON["RECORD_LIB_WANT"] }
+    /AVFoundation video devices:/ { audio = 0; next }
+    /AVFoundation audio devices:/ { audio = 1; next }
+    !audio { next }
+    match($0, /\[[0-9]+\] /) {
+      idx = substr($0, RSTART + 1, RLENGTH - 3)
+      if (idx == want) {
+        name = substr($0, RSTART + RLENGTH)
+        sub(/^[[:space:]]+/, "", name)
+        sub(/[[:space:]]+$/, "", name)
+        print name
+        exit
+      }
     }
   '
 }

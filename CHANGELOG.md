@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-09
+
+Verified end to end on Apple Silicon, macOS 26: a real take with the
+microphone pinned to a silent device and speech played through the speakers
+came back transcribed, so the words could only have arrived through the new
+path; the output device stayed selected and the volume keys kept working.
+
+### Changed
+
+- System audio is captured natively. `record-audio` now asks ScreenCaptureKit
+  for what the Mac is playing and streams it into a FIFO that ffmpeg reads as
+  a second input, mixed with the microphone at the same balance as before.
+  BlackHole, the two aggregate devices (`Record-In`, `Record-Out`) and the
+  output switch are gone: no driver, no admin password at install, the output
+  device is never touched, and the volume keys work during a take.
+- Requires macOS 13 or newer, where ScreenCaptureKit learned to capture audio.
+  `install.sh` says so in preflight instead of failing in the compiler.
+- `install.sh` no longer installs `switchaudio-osx` and accepts
+  `--with-blackhole` only to say it is not needed any more. On a Mac that ran
+  an earlier version it removes the leftover aggregates, restores the output
+  the old state file names, and points out the BlackHole cask can go.
+- The start line names the microphone it opened and whether system audio is
+  mixed in; `record status` says the same while a take runs.
+
+### Added
+
+- `record mic`: the microphone the next start would open, resolved the way a
+  start does it, and the state of the system audio switch. Read only.
+- A start that cannot get system audio still starts, microphone only, and
+  prints the helper's own reason, kept in `$RECORD_DIR/.sysaudio.log`.
+
+### Removed
+
+- `record-audio up` and `record-audio which`. `down` stays for the leftovers
+  of older versions and takes the previous output's name to restore it.
+
 ## [0.2.0] - 2026-09-08
 
 Verified end to end on Apple Silicon with all three CLIs on a real one-minute

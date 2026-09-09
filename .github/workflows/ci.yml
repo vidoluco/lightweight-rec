@@ -6,7 +6,7 @@ name: CI
 # under test/ is green, and every Swift helper still compiles.
 #
 # It CANNOT prove: anything that needs a TCC permission grant (Screen
-# Recording, Microphone, Accessibility), a real capture, BlackHole, skhd, any
+# Recording, Microphone, Accessibility), a real capture, skhd, any
 # of the AI CLIs, or a whisper transcription. A GitHub runner cannot click a
 # System Settings dialog. Every change to the capture or audio path still has
 # to be exercised by hand on a real Mac before it is merged.
@@ -40,8 +40,8 @@ jobs:
       # multi-hundred-megabyte download and no test needs them: the suite
       # reads recorded avfoundation fixtures, runs `record help`, greps the
       # tree, and runs the uninstaller inside a throwaway HOME under the
-      # runner's TMPDIR with a PATH holding neither skhd nor
-      # switchaudiosource, so it touches nothing outside that directory. A
+      # runner's TMPDIR with a PATH holding no skhd, so it touches nothing
+      # outside that directory. A
       # test that does need a heavy dependency has to bring its own setup step
       # with it.
       #
@@ -162,9 +162,9 @@ jobs:
 
       # Every .swift file at the repo root, which is where the helpers
       # install.sh compiles live, so one added later is covered without
-      # editing this workflow. Both frameworks are linked for every file:
-      # install.sh links one each, an unused framework costs nothing, and a
-      # per-file list here would go stale. Swift under test/ is deliberately
+      # editing this workflow. Every framework is linked for every file:
+      # install.sh links what each one needs, an unused framework costs
+      # nothing, and a per-file list here would go stale. Swift under test/ is deliberately
       # not built here, because the test job builds it with the frameworks it
       # actually needs. Output goes to the runner's temp directory: nothing is
       # written to ~/bin, nothing is registered, no audio device is created
@@ -181,5 +181,6 @@ jobs:
           for f in "${files[@]}"; do
             echo "Compiling $f"
             swiftc -O -o "$RUNNER_TEMP/$(basename "$f" .swift)" "$f" \
-              -framework CoreAudio -framework AppKit
+              -framework CoreAudio -framework AppKit \
+              -framework ScreenCaptureKit -framework CoreMedia
           done

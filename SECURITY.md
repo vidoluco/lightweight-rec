@@ -30,7 +30,7 @@ feature, and here it would silently *enable* egress, which is worse.
 
 To be exact about "zero": this is about `record`, the thing that runs when you
 press Option+R. `install.sh` does use the network, once, before any recording
-exists: Homebrew fetches ffmpeg, whisper.cpp, skhd and switchaudio-osx, and the
+exists: Homebrew fetches ffmpeg, whisper.cpp and skhd, and the
 574 MB whisper model is downloaded from HuggingFace and checked against a byte
 count and a SHA-256 pinned in the script. Nothing of yours goes out in either
 direction, and nothing repeats it afterwards.
@@ -46,27 +46,21 @@ messages, a colleague's shared screen, whatever a browser tab happens to be
 showing. Other displays are not captured, and there is no per-application
 exclusion and no pause. The only control is stopping.
 
-**Audio.** The microphone, for the whole take. BlackHole 2ch is opt in at
-install time (`./install.sh --with-blackhole`); once it is installed, and unless
-`RECORD_SYSTEM_AUDIO` is turned off, `record start` builds two aggregate
-CoreAudio devices, routes system output through one of them, and records
-microphone plus system audio mixed down to mono. On a call that means the other
+**Audio.** The microphone, for the whole take, plus what the Mac is playing,
+unless `RECORD_SYSTEM_AUDIO` is turned off. The system audio comes from
+ScreenCaptureKit, under the same Screen Recording grant the screen capture
+needs: no driver, no aggregate device, no change to the output device. It is
+mixed with the microphone down to mono. On a call that means the other
 participants are recorded, including the ones wearing headphones on the far end,
 and this is the intended behaviour of that feature, not a leak in it.
 `RECORD_SYSTEM_AUDIO=0` gives it up and records the microphone alone.
 
-**Which microphone.** `RECORD_MIC` names the input and is honoured on every
-path, the BlackHole aggregates included, where it selects the microphone side of
-`Record-In`. Left empty, the input is resolved on every start: the one the Mac
-is set to record from or a built-in microphone, else any other real microphone,
-and never a loopback or a meeting-app device on its own. A start that builds the
-aggregates prints the microphone it settled on, in the terminal and in
-`$RECORD_DIR/.record.log`.
-
-`record-audio which` prints the same answer and creates, destroys and selects
-nothing, so it is safe to run at any time, mid-take included. On its own it
-reads `RECORD_MIC` from the environment rather than from the config file, so
-pass the value to it to see what a start would do.
+**Which microphone.** `RECORD_MIC` names the input, exactly as ffmpeg lists
+it. Left empty, the input is resolved on every start: a built-in microphone
+under whatever name the Mac model gives it, else any other real microphone,
+and never a loopback or a meeting-app device on its own. Every start prints
+the microphone it opened, in the terminal and in `$RECORD_DIR/.record.log`,
+and `record mic` prints the same answer without opening anything.
 
 **Nothing else.** No keystrokes, no clipboard, no window titles, no browser
 history, no network capture, no location, no accessibility tree. The tool
@@ -100,7 +94,7 @@ you assume you are private.
 | What | Where | Contents |
 |---|---|---|
 | Video | `$RECORD_DIR` (default `~/Recordings`), one mp4 per hour, named by date and time | screen pixels and mixed audio |
-| State | `$RECORD_DIR/.record.pid`, `.dot.pid`, `.session`, `.lock` (a directory), `.previous-output`, `.record.log`, `.transcribe.log` | process state, ffmpeg errors, the name of your previous audio output device |
+| State | `$RECORD_DIR/.record.pid`, `.dot.pid`, `.session`, `.lock` (a directory), `.sysaudio.pid`, `.sysaudio.fifo`, `.sysaudio.ready`, `.record.log`, `.sysaudio.log`, `.transcribe.log` | process state, the pipe the system audio flows through while a take runs, ffmpeg and helper errors |
 | Whisper model | `$RECORD_DIR/.whisper/` | about 574 MB, not sensitive |
 | Note | `$RECORD_NOTES` (default `~/Documents/Obsidian/Recordings`) | full plaintext transcript, the model's description of the screen, and absolute paths to the mp4 files |
 | Temporary | one scratch directory per `record transcribe` run, `mktemp -d` under `$TMPDIR` | the 16 kHz wav and, unless `RECORD_AI` is off, the downscaled JPEG frames of the video being read, one video at a time. An `EXIT` trap removes the directory on every path out, a failed ffmpeg or whisper included |
@@ -208,26 +202,26 @@ remembering when the transcript says something surprising.
 
 ## Purging everything now
 
-Stop first, so ffmpeg closes the current file and your audio output is
-restored, then remove the data. Adjust the paths if you changed the defaults.
+Stop first, so ffmpeg closes the current file, then remove the data. Adjust
+the paths if you changed the defaults.
 
 ```bash
 record stop
 
 rm -f  "$HOME/Recordings"/*.mp4
-rm -f  "$HOME/Recordings"/.record.log "$HOME/Recordings"/.transcribe.log \
-       "$HOME/Recordings"/.session "$HOME/Recordings"/.previous-output \
-       "$HOME/Recordings"/.record.pid "$HOME/Recordings"/.dot.pid
+rm -f  "$HOME/Recordings"/.record.log "$HOME/Recordings"/.sysaudio.log \
+       "$HOME/Recordings"/.transcribe.log "$HOME/Recordings"/.session \
+       "$HOME/Recordings"/.record.pid "$HOME/Recordings"/.dot.pid \
+       "$HOME/Recordings"/.sysaudio.pid "$HOME/Recordings"/.sysaudio.fifo \
+       "$HOME/Recordings"/.sysaudio.ready
 rm -rf "$HOME/Recordings"/.whisper
 rm -f  "$HOME/Documents/Obsidian/Recordings"/*.md
-
-~/bin/record-audio down
 ```
 
-The last line removes the `Record-In` and `Record-Out` aggregate devices, and is
-only relevant if you installed BlackHole. They are created as persistent
-CoreAudio devices, so if a session ended in a crash they survive reboot and may
-still be your default output.
+If you ran a version before 0.3, which used BlackHole, `~/bin/record-audio
+down` removes the `Record-In` and `Record-Out` aggregate devices it created.
+They were persistent CoreAudio devices, so a session that ended in a crash
+could leave one as your default output. Nothing since 0.3 creates them.
 
 Deleting the files is not the end of it, and the leftovers are the part people
 forget:
@@ -264,7 +258,7 @@ there is time: there is no response time commitment, no fix deadline and no
 bounty. If a problem is urgent for you, stop the tool and delete the
 recordings rather than waiting for a patch.
 
-Scope is the code in this repository. ffmpeg, whisper.cpp, skhd, BlackHole,
+Scope is the code in this repository. ffmpeg, whisper.cpp, skhd,
 the `claude`, `cursor-agent` and `copilot` CLIs and whatever app you point
 `RECORD_LAUNCH_APP` at are
 upstream projects with their own reporting channels, and issues in them should

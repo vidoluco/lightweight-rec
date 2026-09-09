@@ -189,8 +189,9 @@ fi
 echo
 echo "== will be kept =="
 if [ -x "$BIN/record-audio" ]; then
-  echo "  the Record-In and Record-Out audio devices are torn down first,"
-  echo "  with '$BIN/record-audio down', so nothing is left in Audio MIDI Setup"
+  echo "  a Record-In or Record-Out device left by a version before 0.3 is"
+  echo "  removed first, with '$BIN/record-audio down', so nothing stays in"
+  echo "  Audio MIDI Setup"
 fi
 if [ -f "$SKHDRC" ] && [ "$SKHD_OURS" -eq 0 ]; then
   if [ "$SKHD_EDIT" -eq 1 ]; then
@@ -227,23 +228,22 @@ if [ "${#REMOVE[@]}" -gt 0 ] || [ "$SKHD_EDIT" -eq 1 ]; then
   fi
 
   echo
-  # Order matters: the helper has to run before it is deleted, or the
-  # aggregate devices survive in the CoreAudio config forever.
+  # Order matters: the helper has to run before it is deleted, or an
+  # aggregate device left by a version before 0.3 survives in the CoreAudio
+  # config forever. Since 0.3 nothing is created, so on a current install
+  # this finds nothing and says so.
   if [ -x "$BIN/record-audio" ]; then
     echo "== audio devices =="
-    if "$BIN/record-audio" down 2>/dev/null; then
-      echo "  Record-In and Record-Out removed"
+    prev=""
+    [ -f "$DIR/.previous-output" ] && prev=$(cat "$DIR/.previous-output")
+    if [ -n "$prev" ]; then
+      "$BIN/record-audio" down "$prev" 2>&1 | sed 's/^/  /' || true
+      echo "  sound output asked back to $prev: check Sound settings if it is not"
     else
-      echo "  nothing to remove, or the helper refused: check Audio MIDI Setup"
+      "$BIN/record-audio" down 2>&1 | sed 's/^/  /' || true
     fi
-  fi
-  if [ -f "$DIR/.previous-output" ] && command -v switchaudiosource >/dev/null 2>&1; then
-    prev=$(cat "$DIR/.previous-output")
-    if switchaudiosource -s "$prev" -t output >/dev/null 2>&1; then
-      echo "  sound output restored to $prev"
-    else
-      echo "  could not restore the sound output to $prev: set it in System Settings"
-    fi
+    echo "  any Record-In or Record-Out from an older version is gone"
+    rm -f "$DIR/.previous-output"
   fi
 
   if [ "${#REMOVE[@]}" -gt 0 ]; then
@@ -375,10 +375,12 @@ fi
 
 echo
 echo "== kept: Homebrew packages, other tools may need them =="
-echo "  ffmpeg  whisper-cpp  koekeishiya/formulae/skhd  switchaudio-osx"
-echo "  cask: blackhole-2ch"
+echo "  ffmpeg  whisper-cpp  koekeishiya/formulae/skhd"
 echo "  Remove them yourself, one at a time, if nothing else uses them:"
-echo "    brew uninstall ffmpeg whisper-cpp koekeishiya/formulae/skhd switchaudio-osx"
+echo "    brew uninstall ffmpeg whisper-cpp koekeishiya/formulae/skhd"
+echo "  Versions before 0.3 also installed switchaudio-osx and, on request, the"
+echo "  blackhole-2ch cask. Neither is used any more:"
+echo "    brew uninstall switchaudio-osx"
 echo "    brew uninstall --cask blackhole-2ch   # audio driver: asks for your password"
 echo "  Handy is not in that list: install.sh only installs it when you ask for"
 echo "  it with --with-handy. If you did, 'brew uninstall --cask handy' removes"

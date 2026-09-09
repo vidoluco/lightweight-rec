@@ -1,7 +1,8 @@
 #!/bin/bash
 # Break this would catch: the microphone resolver picking a device that
 # carries no voice. A loopback driver (BlackHole), a meeting app's virtual
-# input or one of the Record-In / Record-Out aggregates this tool creates all
+# input or one of the Record-In / Record-Out aggregates versions up to 0.2
+# of this tool created all
 # open and record happily, and produce an hour of silence that nobody notices
 # until the transcript comes back empty.
 #
@@ -67,8 +68,8 @@ check avfoundation-macbook-air.txt        1 "MacBook Air Microphone"
 # Continuity offers that iPhone to every nearby Mac and takes it away again
 # when the phone leaves the room, so it is nobody's recording microphone.
 check avfoundation-mac-mini.txt           2 "Yeti Stereo Microphone"
-# Mid-recording on this tool's own setup: the aggregates it created are in the
-# list, and they are the last thing it may record from.
+# A Mac that ran 0.2 mid-recording: the aggregates that version created are
+# in the list, and they are the last thing to record from.
 check avfoundation-blackhole-aggregates.txt 4 "MacBook Pro Microphone"
 # Both a built-in and an external microphone, the external one listed first.
 # The documented order puts the built-in ahead of it: it is the one input the

@@ -13,13 +13,18 @@ if Handy is not installed.
 
 | Project | Role here | License | How it arrives |
 |---|---|---|---|
-| [ffmpeg](https://ffmpeg.org) | screen and microphone capture, frame extract | LGPL 2.1+ / GPL 2+, depending on the Homebrew build | `brew install ffmpeg` |
+| [ffmpeg](https://ffmpeg.org) | screen and microphone capture, the audio mix, frame extract | LGPL 2.1+ / GPL 2+, depending on the Homebrew build | `brew install ffmpeg` |
 | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | local transcription | MIT, The ggml authors | `brew install whisper-cpp` |
 | [ggml-large-v3-turbo-q5_0.bin](https://huggingface.co/ggerganov/whisper.cpp) | the whisper model file | same MIT as whisper.cpp | curl from Hugging Face, size and SHA-256 pinned in `install.sh` |
 | [skhd](https://github.com/koekeishiya/skhd) | Option+R hotkey | MIT, Åsmund Vikane | `brew install koekeishiya/formulae/skhd` |
-| [switchaudio-osx](https://github.com/deweller/switchaudio-osx) | restore the previous audio output | MIT, Devon Weller and Christian Zuckschwerdt | `brew install switchaudio-osx` |
-| [BlackHole](https://github.com/ExistentialAudio/BlackHole) | optional loopback for the other side of a call | GPL-3.0 for source. Official binaries and the BlackHole name are copyright Existential Audio Inc. | `brew install --cask blackhole-2ch`, only with `--with-blackhole` |
 | [Handy](https://github.com/cjpais/handy) | optional push-to-talk dictation, unrelated to capture | MIT, CJ Pais | `brew install --cask handy`, only with `--with-handy` |
+
+System audio is captured with ScreenCaptureKit, a macOS framework, by the
+`record-audio` helper in this repository. Versions up to 0.2 used
+[switchaudio-osx](https://github.com/deweller/switchaudio-osx) (MIT) and,
+optionally, [BlackHole](https://github.com/ExistentialAudio/BlackHole)
+(GPL-3.0 source, binaries and name copyright Existential Audio Inc.); neither
+is installed or called any more.
 
 The AI CLI named by `RECORD_AI` is optional and proprietary: `claude`
 (Anthropic), `cursor-agent` (Cursor) or `copilot` (GitHub). None of them is

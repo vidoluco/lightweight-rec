@@ -137,13 +137,13 @@ section and the timestamped transcript all in one frame. Save it as
 
 Screen Recording, Microphone and the Accessibility grant skhd needs are given
 per binary, by hand, in System Settings. CI has none of them, and no
-BlackHole, no whisper model and none of the AI CLIs either, so it never
+whisper model and none of the AI CLIs either, so it never
 observes a real recording. The start, capture, stop, transcribe, note path is verified by
 a human on real hardware or not at all.
 
 That makes the pull request text load-bearing. Say what you exercised by hand
-and on what machine (chip, macOS version, one display or several, BlackHole
-present or not), and what you did not try. Running only the pure tests is
+and on what machine (chip, macOS version, one display or several, headphones
+or speakers), and what you did not try. Running only the pure tests is
 fine, just say so, and never describe the manual path as verified when it was
 not.
 
