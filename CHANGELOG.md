@@ -5,6 +5,50 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `RECORD_AI` takes a model server as well as a CLI: `ollama` and `lmstudio`
+  on this Mac, `openai`, `anthropic`, `gemini` and `openrouter` out on the
+  network, and `custom` for anything else that speaks the same
+  `/chat/completions` protocol. `record` builds the request itself and curl
+  sends it; the screen frames travel in the body as base64 images. The note,
+  and everything else in the pipeline, is unchanged.
+- With `ollama` or `lmstudio` the tool has what it never had before: the
+  title, the tags, the summary and the description of what was on screen, with
+  the frames and the transcript never leaving the Mac, no account and no bill.
+  It is the setting to use if `RECORD_AI=0` was only ever about egress.
+- `RECORD_AI_URL` points any backend at another endpoint: a second Mac on the
+  network, a gateway, a server on a port of its own. Required by `custom`.
+- `RECORD_AI_KEY`, read from the config file or from the provider's usual
+  variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+  `OPENROUTER_API_KEY`). It reaches curl through a config file written `600` in
+  the run's scratch directory, never on the command line, where `ps` would
+  show it to anything running as you.
+- `RECORD_AI_FRAMES` (8) caps how many of the extracted frames one HTTP screen
+  call carries, evenly spread over the hour: a chat request holds every image
+  it names, and thirty of them is what makes a local model fall over. The CLIs
+  read the frames off disk themselves and ignore it. `RECORD_AI_TIMEOUT` (600)
+  is how long curl waits, which a small model on a laptop needs.
+- Left with no model to ask for, a local backend asks the server which models
+  it has and takes the first, so a one-model Ollama needs no model line at all.
+  That request is also how a server that is not running is caught: the run says
+  nothing answered at the address, the note says it too, and not one frame is
+  extracted.
+- Two more reasons a note can arrive without a summary, each said in the note
+  in its own words rather than looking like a deliberate off switch: no API key
+  for a hosted backend, and an endpoint that refused the model, whose own error
+  is kept in `.transcribe.log`.
+
+### Changed
+
+- The message for an unknown `RECORD_AI` lists every name that works, CLI and
+  server alike, instead of naming the three CLIs.
+- `README`, `SECURITY.md` and `config.example` are explicit about which
+  backends are egress and which are not, and the `any-cli.svg` drawing now
+  cycles through the local and hosted servers too.
+
 ## [0.3.0] - 2026-09-09
 
 Verified end to end on Apple Silicon, macOS 26: a real take with the

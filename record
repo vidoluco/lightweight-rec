@@ -54,14 +54,22 @@ MIC="${RECORD_MIC:-}"           # empty: resolve the input device on every start
 # The switches that are on unless the user says otherwise. Read once here so
 # the defaults live in one place, and compared with is_off, which only accepts
 # a deliberate 0/no/off/false.
-# RECORD_AI names the CLI that writes the title, tags, summary and screen
-# description: claude, cursor or copilot. 0 means no call at all, so nothing
-# leaves the Mac. RECORD_CLAUDE=0 is the old name of that switch and still
-# counts, so a config written for an earlier version keeps its egress off.
+# RECORD_AI names what writes the title, tags, summary and screen description:
+# a CLI (claude, cursor, copilot) or a model server spoken to over HTTP
+# (ollama, lmstudio, openai, anthropic, gemini, openrouter, custom). 0 means
+# no call at all. Only the local two, ollama and lmstudio, keep the frames and
+# the transcript on this Mac; every other backend sends them to its vendor.
+# RECORD_CLAUDE=0 is the old name of the off switch and still counts, so a
+# config written for an earlier version keeps its egress off.
 AI="${RECORD_AI:-claude}"
 is_off "${RECORD_CLAUDE:-1}" && AI=0
-AI_VISION_MODEL="${RECORD_AI_VISION_MODEL:-}"  # empty: the CLI's own default, see ai_defaults
+AI_VISION_MODEL="${RECORD_AI_VISION_MODEL:-}"  # empty: the backend's own default, see ai_defaults
 AI_META_MODEL="${RECORD_AI_META_MODEL:-}"
+AI_URL="${RECORD_AI_URL:-}"       # empty: the default endpoint of the chosen server
+AI_KEY="${RECORD_AI_KEY:-}"       # empty: the provider's usual API key variable
+AI_CURLRC=""                      # written per run, holds the key, mode 600
+AI_FRAMES="${RECORD_AI_FRAMES:-8}"     # frames one HTTP screen call carries
+AI_TIMEOUT="${RECORD_AI_TIMEOUT:-600}" # seconds one HTTP call may take
 SYSTEM_AUDIO="${RECORD_SYSTEM_AUDIO:-1}" # off: the microphone alone, nothing the Mac plays
 LAUNCH_APP="${RECORD_LAUNCH_APP:-}"   # empty: this tool opens no other app
 DAYS="${RECORD_DAYS:-14}"       # mp4 files older than this are deleted on start
@@ -83,24 +91,60 @@ SYSLOG="$DIR/.sysaudio.log"
 # and never a stranger's archive that happens to live in the same folder.
 CLIPS='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]_[0-9][0-9]-[0-9][0-9].mp4'
 
-# The AI CLI is the one optional, paid, off-machine piece, and three of them
-# are known. Each is driven the way its own headless mode wants: claude takes
-# the transcript on stdin and opens the frames with its Read tool; cursor-agent
-# takes everything in the prompt and opens the frames itself in ask mode,
-# which is read-only, inside a workspace that is the scratch directory and
-# nothing else; copilot gets the frames as attachments and the transcript in
-# the prompt, with every tool switched off. stderr is left alone on purpose:
-# a CLI that is not signed in, or asked for a model it does not have, says so
+# The AI pass is the one optional piece, and there are two ways to run it.
+#
+# A CLI: claude, cursor or copilot, already installed and signed in, billed to
+# that vendor's plan. Each is driven the way its own headless mode wants:
+# claude takes the transcript on stdin and opens the frames with its Read
+# tool; cursor-agent takes everything in the prompt and opens the frames
+# itself in ask mode, which is read-only, inside a workspace that is the
+# scratch directory and nothing else; copilot gets the frames as attachments
+# and the transcript in the prompt, with every tool switched off.
+#
+# Or a model server, over HTTP, in the /chat/completions shape every one of
+# them speaks: ollama and lmstudio on this Mac, openai, anthropic, gemini and
+# openrouter out on the network, custom for anything else that talks the same
+# protocol. `record` builds the request itself, curl sends it, and the frames
+# travel as base64 images in the body. The local two are the interesting case:
+# with ollama or lmstudio the screen frames and the transcript never leave the
+# machine, and the note still gets its title, tags, summary and screen
+# description. That is the only configuration in which this tool both reads
+# your screen and makes no network request at all.
+#
+# stderr is left alone on purpose, in both paths: a CLI that is not signed in,
+# a server that is not running, a model that was never pulled, each says so
 # there, and .transcribe.log is where that line has to end up.
 ai_off() { is_off "$AI"; }
 
+# Every name RECORD_AI accepts, in one place: the message for a name that is
+# not among them is built from this, so a backend added here cannot be left
+# out of what the tool tells the user.
+AI_CLIS="claude cursor copilot"
+AI_SERVERS="ollama lmstudio openai anthropic gemini openrouter custom"
+
+ai_kind() {
+  local n
+  for n in $AI_CLIS;    do [ "$AI" = "$n" ] && { echo cli;  return; }; done
+  for n in $AI_SERVERS; do [ "$AI" = "$n" ] && { echo http; return; }; done
+  echo ""
+}
+
+ai_names() {
+  echo "$AI_CLIS $AI_SERVERS" | sed -e 's/ /, /g' -e 's/\(.*\), /\1 or /'
+}
+
 # The binary behind RECORD_AI, or nothing for a name this tool does not know.
+# Every server backend is curl: one program, whichever endpoint answers.
 ai_bin() {
-  case "$AI" in
-    claude)  echo claude ;;
-    cursor)  echo cursor-agent ;;
-    copilot) echo copilot ;;
-    *)       echo "" ;;
+  case "$(ai_kind)" in
+    http) echo curl ;;
+    cli)
+      case "$AI" in
+        claude)  echo claude ;;
+        cursor)  echo cursor-agent ;;
+        copilot) echo copilot ;;
+      esac ;;
+    *) echo "" ;;
   esac
 }
 
@@ -116,6 +160,148 @@ ai_defaults() {
   esac
 }
 
+# Where each server backend lives, which variable carries its key, and what it
+# runs when the config names no model. RECORD_AI_URL and RECORD_AI_KEY win
+# over all of it, which is what makes a compatible gateway or a second machine
+# on the LAN ("http://studio.local:1234/v1") reachable without a new backend
+# name here.
+#
+# The two local backends deliberately have no model default: `record` asks the
+# server which models it has and takes the first, so a one-model Ollama works
+# out of the box, and with several installed the config says which one. The
+# hosted four default to a small, cheap, vision-capable model each. Model ids
+# come and go; a name the endpoint does not carry makes the call fail and the
+# note say so, exactly as a wrong CLI model does.
+ai_http_defaults() {
+  case "$AI" in
+    ollama)
+      : "${AI_URL:=http://localhost:11434/v1}" ;;
+    lmstudio)
+      : "${AI_URL:=http://localhost:1234/v1}" ;;
+    openai)
+      : "${AI_URL:=https://api.openai.com/v1}"
+      : "${AI_KEY:=${OPENAI_API_KEY:-}}"
+      : "${AI_VISION_MODEL:=gpt-5.4-mini}"; : "${AI_META_MODEL:=gpt-5.4-mini}" ;;
+    anthropic)
+      : "${AI_URL:=https://api.anthropic.com/v1}"
+      : "${AI_KEY:=${ANTHROPIC_API_KEY:-}}"
+      : "${AI_VISION_MODEL:=claude-sonnet-5}"; : "${AI_META_MODEL:=claude-haiku-4-5}" ;;
+    gemini)
+      : "${AI_URL:=https://generativelanguage.googleapis.com/v1beta/openai}"
+      : "${AI_KEY:=${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}}"
+      : "${AI_VISION_MODEL:=gemini-3.8-flash}"; : "${AI_META_MODEL:=gemini-3.8-flash}" ;;
+    openrouter)
+      : "${AI_URL:=https://openrouter.ai/api/v1}"
+      : "${AI_KEY:=${OPENROUTER_API_KEY:-}}"
+      : "${AI_VISION_MODEL:=google/gemini-3.8-flash}"
+      : "${AI_META_MODEL:=google/gemini-3.8-flash}" ;;
+  esac
+}
+
+# The backends that are somebody's paid API and cannot work without a key. The
+# local two need none, and `custom` is whatever the user pointed it at: a
+# gateway on the LAN usually wants no key either, so a missing one there is
+# not an error, it is just a header that is not sent.
+ai_needs_key() {
+  case "$AI" in
+    openai|anthropic|gemini|openrouter) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The variable each hosted backend reads when RECORD_AI_KEY is empty, named in
+# the error so the user knows which one to set.
+ai_key_var() {
+  case "$AI" in
+    openai)     echo OPENAI_API_KEY ;;
+    anthropic)  echo ANTHROPIC_API_KEY ;;
+    gemini)     echo GEMINI_API_KEY ;;
+    openrouter) echo OPENROUTER_API_KEY ;;
+    *)          echo RECORD_AI_KEY ;;
+  esac
+}
+
+# Seconds one call may take. Same reason as ai_pick_frames: curl refuses a
+# config file whose max-time is not a number, and would refuse every call.
+ai_timeout() {
+  case "$AI_TIMEOUT" in
+    ""|*[!0-9]*|0) echo 600 ;;
+    *) echo "$AI_TIMEOUT" ;;
+  esac
+}
+
+# curl reads the key, the timeout and the headers from a file, never from the
+# command line: arguments are visible in `ps` to anything running as this user,
+# and an API key has no business being there. The file lives in the scratch
+# directory the run already removes on every exit path, and is written 600.
+ai_curl_config() {
+  ( umask 077
+    {
+      printf 'silent\n'
+      printf 'show-error\n'
+      printf 'fail-with-body\n'
+      printf 'max-time = %s\n' "$(ai_timeout)"
+      printf 'header = "Content-Type: application/json"\n'
+      # Every one of these endpoints, the two Anthropic and Google run for
+      # OpenAI clients included, takes the key as a bearer token.
+      [ -n "$AI_KEY" ] && printf 'header = "Authorization: Bearer %s"\n' "$AI_KEY"
+      :
+    } > "$AI_CURLRC" )
+}
+
+# The first model the endpoint lists, which is what an unconfigured local
+# server is asked for. Failing here is the useful signal that nothing is
+# listening, and it happens before a single frame is extracted.
+ai_first_model() {
+  curl --config "$AI_CURLRC" --url "$AI_URL/models" | json_get 'data.0.id'
+}
+
+# Everything that has to be true before a server backend is worth calling,
+# checked once, out loud. Returns 1 with AI_WHY set, and the caller turns the
+# AI pass off: a note that says "nothing answered at http://localhost:11434/v1"
+# is worth more than one that silently lost its summary.
+ai_http_ready() {
+  local first
+  ai_http_defaults
+  # A trailing slash in a hand-written RECORD_AI_URL would make every path
+  # below a double one. Harmless on most servers, a 404 on some.
+  AI_URL="${AI_URL%/}"
+  AI_CURLRC="$WORK/curlrc"
+  if [ -z "$(json_reader)" ]; then
+    AI_WHY=nojson
+    echo "RECORD_AI is \"$AI\", which answers in JSON, and neither plutil nor python3" >&2
+    echo "is here to read it: no AI call." >&2
+    return 1
+  fi
+  if [ -z "$AI_URL" ]; then
+    AI_WHY=nourl
+    echo "RECORD_AI is \"$AI\" and RECORD_AI_URL is empty: no endpoint to call." >&2
+    return 1
+  fi
+  if ai_needs_key && [ -z "$AI_KEY" ]; then
+    AI_WHY=nokey
+    # Remembered here, while $AI still holds the backend's name: the caller
+    # switches it off next, and the note is written long after.
+    AI_KEY_VAR=$(ai_key_var)
+    echo "RECORD_AI is \"$AI\" and no API key was found in $AI_KEY_VAR or" >&2
+    echo "RECORD_AI_KEY: no AI call. Both are read from $CONFIG too." >&2
+    return 1
+  fi
+  ai_curl_config
+  if [ -z "$AI_VISION_MODEL" ] || [ -z "$AI_META_MODEL" ]; then
+    if ! first=$(ai_first_model) || [ -z "$first" ]; then
+      AI_WHY=unreachable
+      echo "Nothing answered at $AI_URL/models (RECORD_AI=$AI): no AI call." >&2
+      echo "Start the server, or name the model with RECORD_AI_VISION_MODEL and" >&2
+      echo "RECORD_AI_META_MODEL to skip this check." >&2
+      return 1
+    fi
+    : "${AI_VISION_MODEL:=$first}"
+    : "${AI_META_MODEL:=$first}"
+  fi
+  return 0
+}
+
 AI_RULES="Write in English what the screen showed. Hard rules:
 - Copy readable text LITERALLY: window or call title, URL, repo and project names, table headers and values, visible participant names.
 - If text is blurry, say it is unreadable. NEVER invent a number, a name, or a URL.
@@ -123,14 +309,114 @@ AI_RULES="Write in English what the screen showed. Hard rules:
 - Anchor every observation to the frame timestamp.
 - At most 15 lines."
 
+AI_EYES="You are the eyes of someone who missed this meeting and has to remember it."
+
+AI_ASK="This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
+TITLE: <max 6 words, in English, specific to the content>
+TAGS: <2-4 short kebab-case tags separated by space, e.g. meeting standup planning>
+SUMMARY: <2-3 sentences on the content and any decisions>"
+
+# At most RECORD_AI_FRAMES of the lines on stdin, evenly spread over them, the
+# first and the last always kept. A CLI is handed the whole hour's worth of
+# frames and decides for itself how to read them; a chat request carries every
+# image it names in one body, and thirty of those is a request a local model
+# on a laptop will not survive. The extraction does not change: this picks
+# from what was extracted, so the timestamps stay honest.
+ai_pick_frames() {
+  local k="$AI_FRAMES"
+  # A config is edited by hand and this one is a number: anything that is not
+  # falls back to the default rather than deciding, through awk's idea of
+  # comparing a word with a number, that no image is sent at all.
+  case "$k" in ""|*[!0-9]*|0) k=8 ;; esac
+  awk -v k="$k" '
+    { line[NR] = $0 }
+    END {
+      if (k < 1 || NR <= k) { for (i = 1; i <= NR; i++) print line[i]; exit }
+      if (k == 1) { print line[1]; exit }
+      for (j = 0; j < k; j++) print line[int(j * (NR - 1) / (k - 1)) + 1]
+    }'
+}
+
+# One chat request, sent and read. $1 is the file holding the body. The
+# assistant's message goes to stdout and nothing else does; every failure,
+# a refusal from the endpoint included, goes to stderr and returns 1, so the
+# caller sees an empty answer and the note says the call came back silent.
+ai_post() {
+  local body="$1" resp="$WORK/ai-response.json" out err=""
+  rm -f "$resp"
+  if curl --config "$AI_CURLRC" --url "$AI_URL/chat/completions" \
+       --data-binary "@$body" --output "$resp"; then
+    if out=$(json_get 'choices.0.message.content' < "$resp") && [ -n "$out" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+  fi
+  # Every one of these APIs puts the reason in .error.message, and the ones
+  # that do not (a proxy, an HTML error page) at least put something in the
+  # body worth quoting.
+  err=$(json_get 'error.message' < "$resp" 2>/dev/null) || err=""
+  [ -n "$err" ] || err=$(LC_ALL=C tr -d '\000-\010\013-\037' < "$resp" 2>/dev/null | head -c 200)
+  echo "$AI at $AI_URL did not answer: ${err:-no response body}" >&2
+  return 1
+}
+
+# The screen call as a chat request: the rules and the frame times as text,
+# then the frames themselves as base64 data URLs, in order. $1 is the frame
+# map, which is where the paths come from.
+ai_http_vision() {
+  local map="$1" body="$WORK/ai-request.json" sent labels line path
+  sent=$(printf '%s\n' "$map" | ai_pick_frames)
+  # The model is told when each image was taken, by position rather than by
+  # path: the scratch directory's name is of no use to it.
+  labels=$(printf '%s\n' "$sent" | awk '{ i = index($0, "(at "); printf "image %d %s\n", NR, substr($0, i) }')
+  {
+    printf '{"model":"'
+    printf '%s' "$AI_VISION_MODEL" | json_escape
+    printf '","messages":[{"role":"user","content":[{"type":"text","text":"'
+    printf '%s\nThe images below are screen frames in order. This is when each one was taken:\n\n%s\n\n%s\n' \
+      "$AI_EYES" "$labels" "$AI_RULES" | json_escape
+    printf '"}'
+    while IFS= read -r line; do
+      path="${line%%  (at *}"
+      [ -f "$path" ] || continue
+      printf ',{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,'
+      base64 < "$path" | tr -d '\n'
+      printf '"}}'
+    done <<EOF
+$sent
+EOF
+    printf ']}]}'
+  } > "$body"
+  ai_post "$body"
+}
+
+# Title, tags and summary as a chat request. The transcript arrives on stdin,
+# already cut to the size the call may send; $1 is the instruction.
+ai_http_meta() {
+  local body="$WORK/ai-request.json"
+  {
+    printf '{"model":"'
+    printf '%s' "$AI_META_MODEL" | json_escape
+    printf '","messages":[{"role":"user","content":"'
+    { printf '%s\n\n=== TRANSCRIPT ===\n' "$1"; cat; } | json_escape
+    printf '"}]}'
+  } > "$body"
+  ai_post "$body"
+}
+
 # One screen description. $1 is the frame map (one path and its offset per
 # line), $2 the directory those frames live in. The answer goes to stdout.
 ai_vision() {
   local map="$1" frames="$2" f
-  local eyes="You are the eyes of someone who missed this meeting and has to remember it."
+  if [ "$(ai_kind)" = http ]; then
+    # The map carries the path of every frame, so the directory is of no use
+    # here: the images go into the request body, not to a tool that opens them.
+    ai_http_vision "$map"
+    return
+  fi
   case "$AI" in
     claude)
-      claude -p "$eyes
+      claude -p "$AI_EYES
 Read these screen frames with Read, one by one, in order:
 
 $map
@@ -138,7 +424,7 @@ $map
 $AI_RULES" --model "$AI_VISION_MODEL" --allowedTools Read ;;
     cursor)
       cursor-agent -p --mode ask --trust --workspace "$frames" --output-format text \
-        --model "$AI_VISION_MODEL" "$eyes
+        --model "$AI_VISION_MODEL" "$AI_EYES
 Open these screen frames, JPEG files in this workspace, one by one, in order:
 
 $map
@@ -149,7 +435,7 @@ $AI_RULES" ;;
       while IFS= read -r f; do
         [ -n "$f" ] && attach+=(--attachment "$f")
       done < <(find "$frames" -name 'k*.jpg' | sort)
-      copilot -p "$eyes
+      copilot -p "$AI_EYES
 The attached screen frames are in order. This is when each one was taken:
 
 $map
@@ -164,21 +450,21 @@ $AI_RULES" -s --no-custom-instructions --no-ask-user --available-tools= \
 # workspace. Three lines on stdout, parsed by the caller.
 ai_meta() {
   local work="$1"
-  local ask="This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
-TITLE: <max 6 words, in English, specific to the content>
-TAGS: <2-4 short kebab-case tags separated by space, e.g. meeting standup planning>
-SUMMARY: <2-3 sentences on the content and any decisions>"
+  if [ "$(ai_kind)" = http ]; then
+    ai_http_meta "$AI_ASK"
+    return
+  fi
   case "$AI" in
     claude)
-      claude -p --model "$AI_META_MODEL" "$ask" ;;
+      claude -p --model "$AI_META_MODEL" "$AI_ASK" ;;
     cursor)
       cursor-agent -p --mode ask --trust --workspace "$work" --output-format text \
-        --model "$AI_META_MODEL" "$ask
+        --model "$AI_META_MODEL" "$AI_ASK
 
 === TRANSCRIPT ===
 $(cat)" ;;
     copilot)
-      copilot -p "$ask
+      copilot -p "$AI_ASK
 
 === TRANSCRIPT ===
 $(cat)" -s --no-custom-instructions --no-ask-user --available-tools= \
@@ -186,8 +472,18 @@ $(cat)" -s --no-custom-instructions --no-ask-user --available-tools= \
   esac
 }
 
-# The phrases the three CLIs print instead of an answer when they cannot give
-# one. Matched against stdout, because that is where a wrapped-up error lands.
+# True when the text on stdin is a CLI saying it cannot answer rather than an
+# answer. Never true for a server backend: there a refusal is an HTTP status
+# and an error body, which ai_post has already read and reported, and sniffing
+# the text would only let a model that wrote "not available" about the screen
+# throw away its own description.
+ai_refused() {
+  [ "$(ai_kind)" = http ] && return 1
+  grep -qiE "$AI_REFUSAL"
+}
+
+# The phrases the CLIs print instead of an answer when they cannot give one.
+# Matched against stdout, because that is where a wrapped-up error lands.
 AI_REFUSAL='not logged in|please run /login|invalid api key|credit balance|usage limit|unauthorized|unauthenticated|unknown model|not available|invalid model|rate limit|quota|login required|sign in'
 
 running() {
@@ -437,33 +733,43 @@ case "$cmd" in
     # a choice (off), a typo (unknown name), a missing binary, or a CLI that
     # exists and answered nothing. The last used to be indistinguishable from
     # the first, with the error swallowed by 2>/dev/null.
+    # One scratch directory for the whole run, removed on every exit path,
+    # including a failed ffmpeg under set -e. The old `mktemp -t record`.wav
+    # left an empty stub in TMPDIR for every mp4 ever transcribed: mktemp
+    # created one path and the .wav suffix made the real file a different one.
+    # It is created before the checks below because a server backend keeps its
+    # curl config, the one file that holds the API key, inside it.
+    WORK=$(mktemp -d -t record-work)
+    trap 'rm -rf "$WORK"' EXIT
+
     AI_SILENT=0
     AI_WHY=""
+    AI_KEY_VAR=""
     AI_BIN=$(ai_bin)
+    AI_WHERE="$AI_BIN"
     if ai_off; then
       AI_WHY="off"
       echo "RECORD_AI is off: no AI call. The note gets the full transcript,"
       echo "a generic title and no screen description."
     elif [ -z "$AI_BIN" ]; then
       AI_WHY="unknown"
-      echo "RECORD_AI is \"$AI\", which is not claude, cursor or copilot: no AI call." >&2
+      echo "RECORD_AI is \"$AI\", which is not $(ai_names): no AI call." >&2
       echo "The note gets the full transcript, a generic title and no screen description."
       AI=0
     elif ! command -v "$AI_BIN" >/dev/null 2>&1; then
       AI_WHY="missing"
       echo "The \`$AI_BIN\` CLI is not installed (RECORD_AI=$AI): no AI call." >&2
       AI=0
+    elif [ "$(ai_kind)" = http ] && ! ai_http_ready; then
+      # ai_http_ready has already said which of the four things is wrong and
+      # set AI_WHY to it. The note repeats it below.
+      echo "The note gets the full transcript, a generic title and no screen description."
+      AI=0
     else
       ai_defaults
-      echo "AI: $AI ($AI_BIN), screen frames with $AI_VISION_MODEL, title and summary with $AI_META_MODEL."
+      [ "$(ai_kind)" = http ] && AI_WHERE="$AI_URL"
+      echo "AI: $AI ($AI_WHERE), screen frames with $AI_VISION_MODEL, title and summary with $AI_META_MODEL."
     fi
-
-    # One scratch directory for the whole run, removed on every exit path,
-    # including a failed ffmpeg under set -e. The old `mktemp -t record`.wav
-    # left an empty stub in TMPDIR for every mp4 ever transcribed: mktemp
-    # created one path and the .wav suffix made the real file a different one.
-    WORK=$(mktemp -d -t record-work)
-    trap 'rm -rf "$WORK"' EXIT
 
     TEXT=""
     VISUAL=""
@@ -534,7 +840,7 @@ $chunk
         map=$(echo "$listing" | awk -v n="$n_frame" -v d="$duration" \
           '{ t=int((NR-1)*d/n); printf "%s  (at %d:%02d from start)\n", $0, int(t/60), t%60 }')
         descr=$(ai_vision "$map" "$frames" || true)
-        if echo "$descr" | grep -qiE "$AI_REFUSAL"; then
+        if printf '%s\n' "$descr" | ai_refused; then
           echo "Screen read skipped: $AI did not answer ($(echo "$descr" | head -1))" >&2
           descr=""
         fi
@@ -560,7 +866,7 @@ $descr
     if ! ai_off; then
       META=$(printf '%s\n\n=== WHAT WAS ON SCREEN ===\n%s\n' "$TEXT" "$VISUAL" \
         | head -c 30000 | ai_meta "$WORK" || true)
-      if echo "$META" | grep -qiE "$AI_REFUSAL"; then
+      if printf '%s\n' "$META" | ai_refused; then
         echo "Title and summary skipped: $AI did not answer ($(echo "$META" | head -1))" >&2
         META=""
       fi
@@ -610,16 +916,36 @@ $descr
           echo ;;
         unknown)
           echo "*No title, tags, summary or screen description: RECORD_AI is set to*"
-          echo "*\`${RECORD_AI:-}\`, which is not claude, cursor or copilot. The transcript*"
-          echo "*below is what was said.*"
+          echo "*\`${RECORD_AI:-}\`, which is not $(ai_names). The transcript below is*"
+          echo "*what was said.*"
           echo ;;
         missing)
           echo "*No title, tags, summary or screen description: the \`$AI_BIN\` CLI*"
           echo "*is not installed. The transcript below is what was said.*"
           echo ;;
+        nokey)
+          echo "*No title, tags, summary or screen description: RECORD_AI is*"
+          echo "*\`${RECORD_AI:-}\` and no API key was found in $AI_KEY_VAR or*"
+          echo "*RECORD_AI_KEY. The transcript below is what was said.*"
+          echo ;;
+        nourl)
+          echo "*No title, tags, summary or screen description: RECORD_AI is*"
+          echo "*\`${RECORD_AI:-}\` and RECORD_AI_URL names no endpoint. The transcript*"
+          echo "*below is what was said.*"
+          echo ;;
+        unreachable)
+          echo "*No title, tags, summary or screen description: nothing answered at*"
+          echo "*\`$AI_URL\` (RECORD_AI is \`${RECORD_AI:-}\`), so the model was never*"
+          echo "*asked. The transcript below is what was said.*"
+          echo ;;
+        nojson)
+          echo "*No title, tags, summary or screen description: RECORD_AI is*"
+          echo "*\`${RECORD_AI:-}\`, which answers in JSON, and neither plutil nor*"
+          echo "*python3 is here to read it. The transcript below is what was said.*"
+          echo ;;
         *)
           if [ "$AI_SILENT" = 1 ]; then
-            echo "*The \`$AI\` CLI did not answer for part or all of this note (model*"
+            echo "*\`$AI\` did not answer for part or all of this note (model*"
             echo "*$AI_VISION_MODEL / $AI_META_MODEL): what it said is in \`.transcribe.log\`*"
             echo "*next to the videos. The transcript below is what was said.*"
             echo

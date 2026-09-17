@@ -402,6 +402,18 @@ echo "or the app Option+R brings up with the recording."
 echo "The hotkey itself is in $FRAGMENT"
 echo "List displays with: record screens"
 echo "Check which microphone will be recorded with: record mic"
+echo
+# The title, tags and summary are the one part of the pipeline this script
+# installs nothing for, and the default expects a CLI that may not be there.
+# Saying so here is the difference between a first note that looks broken and
+# one the reader understands.
+echo "Title, tags and summary come from whatever RECORD_AI names in $CONFIG,"
+echo "and this installer sets none of it up. The default is the claude CLI."
+echo "For a model on this Mac instead, with nothing leaving it, install Ollama"
+echo "or LM Studio, start its server, and set in $CONFIG:"
+echo "    RECORD_AI=ollama"
+echo "RECORD_AI=0 skips that step entirely: the note is still written, with the"
+echo "full transcript and a generic title."
 
 # The note is written whether or not a vault is there, and a folder full of
 # Markdown that Obsidian never shows looks exactly like a tool that did not

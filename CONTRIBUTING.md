@@ -6,10 +6,16 @@ patch for something this project has decided not to be.
 ## Scope
 
 One hotkey and four moving parts: ffmpeg captures a display at 1 fps plus
-audio, whisper.cpp transcribes it locally, an optional AI CLI (`claude`,
-`cursor-agent` or `copilot`, picked by `RECORD_AI`) writes a title, tags and a
-summary, and a Markdown note lands in your own vault. No
-database, no index, no daemon, no UI, and it is meant to stay that way.
+audio, whisper.cpp transcribes it locally, an optional AI pass writes a title,
+tags and a summary, and a Markdown note lands in your own vault. That pass is
+whatever `RECORD_AI` names: a CLI (`claude`, `cursor-agent`, `copilot`) or a
+model server spoken to over HTTP, Ollama or LM Studio on the same Mac included.
+No database, no index, no daemon, no UI, and it is meant to stay that way.
+
+A new backend is welcome when it speaks the `/chat/completions` protocol the
+others do, which is a name, an endpoint and a default model in `record`, and a
+case in `test/ai_http_backend.test.sh`. A backend needing its own request
+shape, its own SDK or a second dependency is not.
 
 Welcome: correctness and robustness fixes, especially on hardware the author
 does not own (Mac mini, Mac Studio, iMac, Intel, external displays); anything
@@ -136,9 +142,11 @@ section and the timestamped transcript all in one frame. Save it as
 ## What CI cannot prove
 
 Screen Recording, Microphone and the Accessibility grant skhd needs are given
-per binary, by hand, in System Settings. CI has none of them, and no
-whisper model and none of the AI CLIs either, so it never
-observes a real recording. The start, capture, stop, transcribe, note path is verified by
+per binary, by hand, in System Settings. CI has none of them, and no whisper
+model, none of the AI CLIs and no model server either, so it never
+observes a real recording. The tests stub curl, which proves the request
+`record` builds and the flags it passes; that a real Ollama accepts that
+request is something only a run on a real Mac shows. The start, capture, stop, transcribe, note path is verified by
 a human on real hardware or not at all.
 
 That makes the pull request text load-bearing. Say what you exercised by hand
