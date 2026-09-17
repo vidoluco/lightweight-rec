@@ -58,6 +58,16 @@ the_note() {
   find "$1" -maxdepth 1 -name '*.md' | head -1
 }
 
+# Reading a pipeline with grep, never with `grep -q`. `-q` makes grep exit on
+# its first match, the cat feeding it dies of SIGPIPE writing the file after
+# that, and `set -o pipefail` turns the whole thing into a failed assertion
+# about a line that was there all along. It is a race, so it passed here and
+# failed on the macOS runner, where cat still had three files to open when
+# grep was already gone. Letting grep read to the end costs nothing on input
+# this size and cannot lie.
+has_line() { grep -x -- "$1" >/dev/null; }
+has()      { grep -E -- "$1" >/dev/null; }
+
 # The request bodies the run produced, by kind: the screen calls are the ones
 # carrying images, the metadata call is the one that does not.
 vision_requests() { grep -l 'image_url' "$http"/request-*.json 2>/dev/null | sort; }
@@ -84,7 +94,7 @@ note=$(the_note "$notes")
 [ -n "$note" ] || bad "ollama: no note written"
 
 # One model listing, one screen call per clip, one metadata call.
-urls | grep -qx 'http://localhost:11434/v1/models' || bad "ollama: the models endpoint was not asked: $(urls | tr '\n' ' ')"
+urls | has_line 'http://localhost:11434/v1/models' || bad "ollama: the models endpoint was not asked: $(urls | tr '\n' ' ')"
 [ "$(urls | grep -c 'http://localhost:11434/v1/chat/completions')" -eq 3 ] \
   || bad "ollama: expected 3 chat calls, got $(urls | grep -c 'chat/completions')"
 [ "$(vision_requests | wc -l | tr -d ' ')" -eq 2 ] || bad "ollama: expected 2 screen calls, got $(vision_requests | wc -l | tr -d ' ')"
@@ -102,11 +112,11 @@ first_vision=$(vision_requests | head -1)
 n_img=$(grep -o 'data:image/jpeg;base64,' "$first_vision" | wc -l | tr -d ' ')
 [ "$n_img" -eq 2 ] || bad "ollama: expected 2 images in the screen call, got $n_img"
 # Every request is valid JSON and the prompt survived the escaping.
-prompt_text "$first_vision" | grep -q 'screen frames in order' \
+prompt_text "$first_vision" | has 'screen frames in order' \
   || bad "ollama: the screen prompt is missing or the body is not valid JSON"
-prompt_text "$first_vision" | grep -q 'at 0:00 from start' \
+prompt_text "$first_vision" | has 'at 0:00 from start' \
   || bad "ollama: the screen prompt does not say when each frame was taken"
-prompt_text "$(meta_requests | head -1)" | grep -q 'Stub transcript for the test suite' \
+prompt_text "$(meta_requests | head -1)" | has 'Stub transcript for the test suite' \
   || bad "ollama: the transcript did not reach the metadata call"
 
 # No key, so no Authorization header at all.
@@ -126,7 +136,7 @@ prepare lmstudio
 out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
   RECORD_AI=lmstudio RECORD_AI_FRAMES=1 RECORD_TEST_ARGV="$argv" RECORD_TEST_HTTP="$http") && rc=0 || rc=$?
 [ "$rc" -eq 0 ] || bad "lmstudio: record transcribe exited $rc"
-urls | grep -qx 'http://localhost:1234/v1/models' || bad "lmstudio: not called on LM Studio's port"
+urls | has_line 'http://localhost:1234/v1/models' || bad "lmstudio: not called on LM Studio's port"
 n_img=$(grep -o 'data:image/jpeg;base64,' "$(vision_requests | head -1)" | wc -l | tr -d ' ')
 [ "$n_img" -eq 1 ] || bad "lmstudio: RECORD_AI_FRAMES=1 sent $n_img images"
 
@@ -152,11 +162,11 @@ secret="sk-test-not-a-real-key"
 out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
   RECORD_AI=openai RECORD_AI_KEY="$secret" RECORD_TEST_ARGV="$argv" RECORD_TEST_HTTP="$http") && rc=0 || rc=$?
 [ "$rc" -eq 0 ] || bad "withkey: record transcribe exited $rc"
-urls | grep -q '^https://api.openai.com/v1/chat/completions$' || bad "withkey: OpenAI's endpoint was not called"
+urls | has_line 'https://api.openai.com/v1/chat/completions' || bad "withkey: OpenAI's endpoint was not called"
 grep -h -q "Authorization: Bearer $secret" "$http"/request-*.curlrc || bad "withkey: the key did not reach curl's config"
 grep -q -F "$secret" "$argv" && bad "withkey: the API key was passed on the command line"
 # A hosted backend has a model of its own and must not ask the endpoint for one.
-urls | grep -q '/models$' && bad "withkey: a hosted backend asked for a model listing"
+urls | has '/models$' && bad "withkey: a hosted backend asked for a model listing"
 grep -q '^# Stub session' "$(the_note "$notes")" || bad "withkey: the note did not take the stubbed title"
 
 # ------------------------------------------------------------- anthropic
@@ -167,7 +177,7 @@ out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
   RECORD_AI=anthropic RECORD_AI_KEY=k RECORD_AI_VISION_MODEL=see-this \
   RECORD_AI_META_MODEL=name-this RECORD_TEST_ARGV="$argv" RECORD_TEST_HTTP="$http") && rc=0 || rc=$?
 [ "$rc" -eq 0 ] || bad "anthropic: record transcribe exited $rc"
-urls | grep -q '^https://api.anthropic.com/v1/chat/completions$' || bad "anthropic: wrong endpoint"
+urls | has_line 'https://api.anthropic.com/v1/chat/completions' || bad "anthropic: wrong endpoint"
 for f in $(vision_requests); do
   [ "$(json_get model < "$f")" = "see-this" ] || bad "anthropic: a screen call did not use the vision model"
 done
@@ -207,7 +217,7 @@ if grep -q 'RECORD_AI is off' "$note"; then bad "refused: a refused model is rep
 printf '%s\n' "$out" | grep -q 'unknown model: not-pulled' || bad "refused: the endpoint's error did not reach the log"
 # Pinned models mean no listing call: the endpoint is asked for exactly what
 # the config named.
-urls | grep -q '/models$' && bad "refused: a model listing was fetched although both models are pinned"
+urls | has '/models$' && bad "refused: a model listing was fetched although both models are pinned"
 
 # --------------------------------------------------------- custom, no URL
 prepare nourl
@@ -225,7 +235,7 @@ out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
   RECORD_AI=custom RECORD_AI_URL=http://studio.local:1234/v1 \
   RECORD_TEST_ARGV="$argv" RECORD_TEST_HTTP="$http") && rc=0 || rc=$?
 [ "$rc" -eq 0 ] || bad "custom: record transcribe exited $rc"
-urls | grep -qx 'http://studio.local:1234/v1/chat/completions' || bad "custom: RECORD_AI_URL was not used: $(urls | tr '\n' ' ')"
+urls | has_line 'http://studio.local:1234/v1/chat/completions' || bad "custom: RECORD_AI_URL was not used: $(urls | tr '\n' ' ')"
 grep -q '^# Stub session' "$(the_note "$notes")" || bad "custom: the note did not take the stubbed title"
 
 if [ "$fail" -ne 0 ]; then
