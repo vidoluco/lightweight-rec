@@ -880,8 +880,12 @@ $descr
       # asked for and not one of them is labelled, the order is the only thing
       # those lines can be, so put the labels back. Anything else is said out
       # loud instead of being guessed at.
-      if [ -n "$META" ] && [ -z "$(printf '%s\n' "$META" | grep '^\(TITLE\|TAGS\|SUMMARY\):')" ]; then
-        BARE=$(printf '%s\n' "$META" | grep -v '^[[:space:]]*$')
+      if [ -n "$META" ] && ! printf '%s\n' "$META" | grep -q '^\(TITLE\|TAGS\|SUMMARY\):'; then
+        # awk rather than `grep -v`, which exits 1 when it prints nothing: an
+        # answer of nothing but blank lines would then have taken the whole
+        # run down with it under set -e, before the note was written. Empty
+        # here is not a special case, it is simply not three lines.
+        BARE=$(printf '%s\n' "$META" | awk 'NF')
         if [ "$(printf '%s\n' "$BARE" | wc -l | tr -d ' ')" = 3 ]; then
           META=$(printf '%s\n' "$BARE" | awk '
             NR == 1 { print "TITLE: " $0 }
