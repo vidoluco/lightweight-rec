@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
+Verified end to end on Apple Silicon, macOS 26, against LM Studio serving
+`google/gemma-4-e4b` on the same Mac: a real take came back with a title, tags,
+a summary and a description of what was on screen, and the only address
+contacted was `localhost`. That run is also what found the label problem fixed
+below, which no test on Linux could have produced.
+
 ### Added
 
 - `RECORD_AI` takes a model server as well as a CLI: `ollama` and `lmstudio`
