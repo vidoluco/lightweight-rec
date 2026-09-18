@@ -12,7 +12,8 @@ Three drawings:
   header.svg    a take in progress: 1 fps capture on the left, the transcript
                 arriving on the right, the title above
   rec-flow.svg  the pipeline, with the optional AI box that RECORD_AI=0 skips
-  any-cli.svg   one config line switching between the three CLIs
+  any-cli.svg   one config line switching between the CLIs and the model
+                servers, local ones included
   note.svg      the note as it is filed, the README's example, typing itself in
 """
 import os
@@ -261,7 +262,8 @@ def rec_flow():
     cy = 122
     parts = [svg_open(W, H, "lightweight-rec pipeline",
                       "Option R, then capture at one frame per second with the microphone, whisper on the Mac, "
-                      "an optional pass through the AI CLI you name in RECORD_AI for title, tags and summary, "
+                      "an optional pass through the CLI or model server you name in RECORD_AI for title, tags and "
+                      "summary, "
                       "and a Markdown note in your vault.")]
     parts.append(caption(sx, 44, "LIGHTWEIGHT-REC · ~110 MB / HOUR"))
     parts.append(caption(W - sx, 44, "RECORD_AI=0 SKIPS THE DASHED BOX", anchor="end"))
@@ -305,29 +307,40 @@ def rec_flow():
 
 
 # =====================================================================
-# any-cli.svg: one config line, three CLIs
+# any-cli.svg: one config line, a CLI or a model server
 # =====================================================================
 def any_cli():
-    W, H = 1280, 380
-    clis = [("claude", "claude code", "sonnet · haiku", "ANTHROPIC"),
-            ("cursor", "cursor cli", "cursor grok 4.6", "CURSOR"),
-            ("copilot", "copilot cli", "gemini 3.8 flash", "GITHUB")]
-    cx0, cw, ch = 64, 268, 64
-    cys = [120, 200, 280]
-    bx, by, bw, bh = 500, 150, 300, 100
-    nx, nw, nh = 992, 224, 64
-    T = 9.0  # one full turn of the selector
+    # Three CLIs and three shapes of model server, the two local ones first:
+    # they are the case worth showing, because with them the frames and the
+    # transcript never leave the Mac and the note is still complete.
+    clis = [("claude", "claude code", "sonnet · haiku", "CLI"),
+            ("cursor", "cursor cli", "cursor grok 4.6", "CLI"),
+            ("copilot", "copilot cli", "gemini 3.8 flash", "CLI"),
+            ("ollama", "ollama", "localhost:11434", "LOCAL"),
+            ("lmstudio", "lm studio", "localhost:1234", "LOCAL"),
+            ("openai", "openai · gemini", "anthropic · openrouter", "HTTP")]
     n = len(clis)
+    cx0, cw, ch, cgap = 64, 268, 58, 14
+    top = 104
+    cys = [top + ch / 2 + i * (ch + cgap) for i in range(n)]
+    mid = (cys[0] + cys[-1]) / 2
+    W, H = 1280, int(cys[-1] + ch / 2 + 78)
+    bx, bw, bh = 500, 300, 100
+    by = mid - bh / 2
+    nx, nw, nh = 992, 224, 64
+    T = 12.0  # one full turn of the selector
 
-    parts = [svg_open(W, H, "Plug any CLI",
-                      "One config line, RECORD_AI, picks which CLI writes the title, tags, summary and screen "
-                      "description: Claude Code, Cursor CLI or Copilot CLI. The note is the same either way.")]
+    parts = [svg_open(W, H, "A CLI or a model of your own",
+                      "One config line, RECORD_AI, picks what writes the title, tags, summary and screen "
+                      "description: Claude Code, Cursor CLI, Copilot CLI, or any model server that speaks the "
+                      "chat completions protocol, Ollama and LM Studio on this Mac included. The note is the "
+                      "same either way.")]
     parts.append(corners(W, H))
     parts.append(caption(64, 52, "ONE CONFIG LINE"))
-    parts.append(caption(W - 64, 52, "SWAP THE CLI, KEEP THE NOTE", anchor="end"))
+    parts.append(caption(W - 64, 52, "SWAP THE MODEL, KEEP THE NOTE", anchor="end"))
 
     def window(i):
-        # keyTimes over one turn for CLI i: active in [i/n, (i+1)/n)
+        # keyTimes over one turn for backend i: active in [i/n, (i+1)/n)
         if i == 0:
             return "0;%.4f" % (1/n), lambda a, b: f"{a};{b}"
         if i == n - 1:
@@ -338,49 +351,51 @@ def any_cli():
     # separate texts stacked on one anchor, so the visible one always sits
     # right after the equals sign, caret included.
     sel = bx + bw / 2 + 8
-    parts.append(f'<text class="mono" x="{sel}" y="98" text-anchor="end" fill="{MUTED}" font-size="26">RECORD_AI=</text>')
+    parts.append(f'<text class="mono" x="{sel}" y="84" text-anchor="end" fill="{MUTED}" font-size="26">RECORD_AI=</text>')
     parts.append(f'<g class="mono" font-size="26" font-weight="700" fill="{INK}">')
     parts.append(cycle([c[0] for c in clis], T,
-                       lambda key: f'<text x="{sel}" y="98">{key}<tspan class="cursor">▍</tspan></text>'))
+                       lambda key: f'<text x="{sel}" y="84">{key}<tspan class="cursor">▍</tspan></text>'))
     parts.append('</g>')
 
     paths, dots, cards = [], [], []
     for i, ((_key, label, sub, vendor), y) in enumerate(zip(clis, cys)):
         kt, order = window(i)
+        local = vendor == "LOCAL"
         p = f"M{cx0+cw} {y} C{cx0+cw+110} {y} {bx-110} {by+bh/2} {bx} {by+bh/2}"
         paths.append(f'<path d="{p}" fill="none" stroke="{LINE}" stroke-width="2" stroke-dasharray="5 6">'
                      f'<animate attributeName="stroke-dashoffset" from="0" to="-22" dur="0.9s" repeatCount="indefinite"/>'
-                     f'{discrete("stroke", order(RED, LINE), kt, T)}</path>')
+                     f'{discrete("stroke", order(OK if local else RED, LINE), kt, T)}</path>')
         cards.append(f'<rect x="{cx0}" y="{y-ch/2}" width="{cw}" height="{ch}" rx="10" fill="{BOX}" stroke="{LINE}" stroke-width="1.5">'
-                     f'{discrete("stroke", order(RED, LINE), kt, T)}</rect>')
+                     f'{discrete("stroke", order(OK if local else RED, LINE), kt, T)}</rect>')
         cards.append(f'<text class="mono" x="{cx0+18}" y="{y-3}" fill="{INK}" font-size="19" font-weight="700">{label}</text>')
-        cards.append(f'<text class="mono" x="{cx0+18}" y="{y+19}" fill="{MUTED}" font-size="12">{sub}</text>')
-        cards.append(f'<text class="mono" x="{cx0+cw-16}" y="{y-3}" text-anchor="end" fill="{DIM}" font-size="11" letter-spacing="2">{vendor}</text>')
-        # the packet: moves during this CLI's third of the turn, hidden otherwise
+        cards.append(f'<text class="mono" x="{cx0+18}" y="{y+17}" fill="{MUTED}" font-size="12">{sub}</text>')
+        cards.append(f'<text class="mono" x="{cx0+cw-16}" y="{y-3}" text-anchor="end" fill="{OK if local else DIM}" font-size="11" letter-spacing="2">{vendor}</text>')
+        # the packet: moves during this backend's share of the turn, hidden otherwise
         begin = i * T / n
         motion = (f'<animateMotion dur="{T}s" begin="{begin}s" repeatCount="indefinite" calcMode="linear" '
                   f'keyPoints="0;1;1" keyTimes="0;{1/n:.4f};1" path="{p}"/>')
         vis = discrete("opacity", "1;0", f"0;{1/n:.4f}", T, begin=f"{begin}s")
-        dots.append(f'<g opacity="0">{vis}<circle r="4.5" fill="{RED}">{motion}</circle>'
-                    f'<circle r="9.9" fill="{RED}" opacity=".16">{motion}</circle></g>')
+        col = OK if local else RED
+        dots.append(f'<g opacity="0">{vis}<circle r="4.5" fill="{col}">{motion}</circle>'
+                    f'<circle r="9.9" fill="{col}" opacity=".16">{motion}</circle></g>')
 
-    # the shared box: what every CLI has to produce
+    # the shared box: what every backend has to produce
     cards.append(f'<rect class="glow" x="{bx}" y="{by}" width="{bw}" height="{bh}" rx="14" fill="{BOX}" stroke="{RED}" stroke-width="1.5" stroke-dasharray="6 5"/>')
     cards.append(f'<text class="mono" x="{bx+bw/2}" y="{by+44}" text-anchor="middle" fill="{INK}" font-size="20" font-weight="700">title · tags · summary</text>')
     cards.append(f'<text class="mono" x="{bx+bw/2}" y="{by+70}" text-anchor="middle" fill="{MUTED}" font-size="14">and what was on screen</text>')
-    cards.append(f'<text class="mono" x="{bx+bw/2}" y="{by+bh+26}" text-anchor="middle" fill="{RED}" font-size="13" letter-spacing="2.5">OPTIONAL · PAID · OFF-MACHINE</text>')
+    cards.append(f'<text class="mono" x="{bx+bw/2}" y="{by+bh+26}" text-anchor="middle" fill="{RED}" font-size="13" letter-spacing="2.5">OPTIONAL · A CLI OR A SERVER</text>')
     # box -> note
-    p_out = f"M{bx+bw} {by+bh/2} C{bx+bw+90} {by+bh/2} {nx-90} {cys[1]} {nx} {cys[1]}"
+    p_out = f"M{bx+bw} {by+bh/2} C{bx+bw+90} {by+bh/2} {nx-90} {mid} {nx} {mid}"
     paths.append(marching(p_out))
     dots.append(traveller(p_out, begin=1.2, dur=2.2, color=INK, r=4))
-    cards.append(card(nx, cys[1]-nh/2, nw, nh, "note.md", "same note, any CLI"))
-    cards.append(f'<text class="mono" x="{nx+nw/2}" y="{cys[1]+nh/2+26}" text-anchor="middle" fill="{OK}" font-size="13" letter-spacing="2.5">IN YOUR VAULT</text>')
+    cards.append(card(nx, mid-nh/2, nw, nh, "note.md", "same note, any model"))
+    cards.append(f'<text class="mono" x="{nx+nw/2}" y="{mid+nh/2+26}" text-anchor="middle" fill="{OK}" font-size="13" letter-spacing="2.5">IN YOUR VAULT</text>')
 
     parts.extend(paths)
     parts.extend(cards)
     parts.extend(dots)
     parts.append(caption(64, H - 22, "RECORD_AI=0 MAKES NO CALL AT ALL", color=DIM, size=13))
-    parts.append(caption(W - 64, H - 22, "CAPTURE AND TRANSCRIPT NEVER LEAVE THE MAC", anchor="end", color=DIM, size=13))
+    parts.append(caption(W - 64, H - 22, "GREEN: THE FRAMES NEVER LEAVE THE MAC EITHER", anchor="end", color=DIM, size=13))
     parts.append('</svg>')
     return "\n".join(parts)
 

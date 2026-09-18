@@ -4,10 +4,13 @@
 #
 # Four different things can leave a note with the generic title, and the reader
 # has to be able to tell them apart from the note alone: RECORD_AI=0 (a
-# choice), a value that names no known CLI (a typo), a CLI that is not
+# choice), a value that names no known backend (a typo), a CLI that is not
 # installed, and a CLI that is installed and answered nothing, typically
 # because it was asked for a model it does not carry. The first three must
 # make no call at all; the last must leave what the CLI said in the log.
+# The reasons a server backend cannot run are in ai_http_backend.test.sh; the
+# name that matches nothing is here because it is the same message, and it has
+# to name every backend, CLI and server alike.
 # RECORD_CLAUDE=0, the switch's old name, has to keep meaning off: a config
 # written for an earlier release must not start uploading frames on upgrade.
 #
@@ -83,10 +86,16 @@ expect_raw_note alias 'RECORD_AI is off'
 prepare bogus
 out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
   RECORD_AI=bogus RECORD_TEST_ARGV="$argv") && rc=0 || rc=$?
-expect_raw_note bogus 'not claude, cursor or copilot'
+expect_raw_note bogus 'which is not claude, cursor, copilot, ollama, lmstudio'
 grep -qF '`bogus`' "$note" || bad "bogus: the note does not quote the value that was set"
 [ ! -e "$argv" ] || bad "bogus: a CLI was called for an unknown name"
 printf '%s\n' "$out" | grep -q 'RECORD_AI is "bogus"' || bad "bogus: the run does not name the bad value"
+# A backend that exists must never be reported as an unknown name, so the list
+# in the message is checked whole: adding one to record without adding it to
+# ai_names would leave a user told their working config is a typo.
+for backend in claude cursor copilot ollama lmstudio openai anthropic gemini openrouter custom; do
+  grep -qF "$backend" "$note" || bad "bogus: the note's list of backends leaves out $backend"
+done
 
 # ------------------------------------------------------------- not installed
 prepare missing

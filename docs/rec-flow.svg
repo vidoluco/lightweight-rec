@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 260" width="1280" height="260" role="img" aria-label="Option R, then capture at one frame per second with the microphone, whisper on the Mac, an optional pass through the AI CLI you name in RECORD_AI for title, tags and summary, and a Markdown note in your vault.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 260" width="1280" height="260" role="img" aria-label="Option R, then capture at one frame per second with the microphone, whisper on the Mac, an optional pass through the CLI or model server you name in RECORD_AI for title, tags and summary, and a Markdown note in your vault.">
 <title>lightweight-rec pipeline</title>
 <style>
   .mono{font-family:ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;}

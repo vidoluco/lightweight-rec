@@ -4,7 +4,8 @@ Press Option+R. One display is recorded at 1 frame per second, with your
 microphone and what the Mac is playing, all locally. Press it again: a Markdown
 note with the transcript lands in the Obsidian vault you already use. Title,
 tags and summary come from a coding CLI you already have signed in (Claude
-Code, Cursor or Copilot), or from none of them.
+Code, Cursor or Copilot), from a model running on the Mac itself through Ollama
+or LM Studio, from an API, or from none of them.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-lightgrey.svg)](#requirements)
@@ -66,7 +67,7 @@ One mp4 per hour, a red dot on the captured display while a take runs, and
 transcript sections named after their video file, so the note takes you to the
 right minute of the right hour.
 
-<img src="docs/rec-flow.svg" alt="Option R, then capture at one frame per second with the microphone, whisper on the Mac, an optional pass through the AI CLI named in RECORD_AI for title, tags and summary, and a Markdown note in your vault. The grey dot is the path with RECORD_AI=0." width="100%">
+<img src="docs/rec-flow.svg" alt="Option R, then capture at one frame per second with the microphone, whisper on the Mac, an optional pass through the CLI or model server named in RECORD_AI for title, tags and summary, and a Markdown note in your vault. The grey dot is the path with RECORD_AI=0." width="100%">
 
 <details>
 <summary>The same pipeline as text</summary>
@@ -82,12 +83,14 @@ Option+R ──► stop │
                  ▼
              whisper-cli (large-v3-turbo q5_0, local) transcribes with timestamps
                  ▼
-             the CLI named by RECORD_AI reads 8 to 30 evenly spaced   optional,
-             screen frames, then picks title, tags and summary        paid,
-                 │                                                    off-machine
-                 │
+             what RECORD_AI names reads the evenly spaced screen      optional:
+             frames, then picks title, tags and summary               a CLI, an
+                 │                                                    API, or a
+                 │                                                    local model
                  │        RECORD_AI=0 skips both calls and extracts no frames:
                  │        nothing leaves the Mac and the note is still written
+                 │        RECORD_AI=ollama keeps it all here too, with the note
+                 │        complete: the model runs on this Mac
                  ▼
              note in the Obsidian vault, folder Recordings/  (text only)
 ```
@@ -111,12 +114,14 @@ day. So, deliberately: no background capture, no OCR or full-text index, no
 timeline browser or menu bar app, no cloud, no account, no telemetry, no
 redaction or app exclusion list. macOS 13 or newer, Apple Silicon only.
 
-## Plug any CLI
+## Plug any CLI, or a model of your own
 
-<img src="docs/any-cli.svg" alt="One config line, RECORD_AI, picks which CLI writes the title, tags, summary and screen description: Claude Code, Cursor CLI or Copilot CLI. The note is the same either way." width="100%">
+<img src="docs/any-cli.svg" alt="One config line, RECORD_AI, picks what writes the title, tags, summary and screen description: Claude Code, Cursor CLI, Copilot CLI, or any model server that speaks the chat completions protocol, Ollama and LM Studio on this Mac included. The note is the same either way." width="100%">
 
-One line in `~/.config/record/config` picks which CLI writes the title, tags,
+One line in `~/.config/record/config` picks what writes the title, tags,
 summary and screen description. Nothing else changes, the note included.
+
+A CLI you already have signed in, driven in its own headless mode:
 
 | `RECORD_AI` | Binary | Default models | How the frames reach it |
 |---|---|---|---|
@@ -124,16 +129,48 @@ summary and screen description. Nothing else changes, the note included.
 | `cursor` | `cursor-agent` | `cursor-grok-4.6-high` | read-only ask mode, workspace limited to the scratch directory |
 | `copilot` | `copilot` | `gemini-3.8-flash` | as attachments, every tool off |
 
+Or a model server, called over HTTP in the `/chat/completions` shape all of
+them speak. `record` writes the request itself and curl sends it; the frames
+travel inside it as base64 images:
+
+| `RECORD_AI` | Endpoint | API key | Default models |
+|---|---|---|---|
+| `ollama` | `http://localhost:11434/v1` | none | the first model the server lists |
+| `lmstudio` | `http://localhost:1234/v1` | none | the first model the server lists |
+| `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `gpt-5.4-mini` |
+| `anthropic` | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` frames, `claude-haiku-4-5` metadata |
+| `gemini` | `.../v1beta/openai` | `GEMINI_API_KEY` | `gemini-3.8-flash` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `google/gemini-3.8-flash` |
+| `custom` | `RECORD_AI_URL` | `RECORD_AI_KEY`, if it wants one | none: name the model |
+
 ```bash
-RECORD_AI=copilot                         # or cursor, claude, or 0 for no call at all
-RECORD_AI_VISION_MODEL=gemini-3.8-flash   # optional: the model that reads the frames
-RECORD_AI_META_MODEL=gemini-3.8-flash     # optional: the model that writes title, tags, summary
+RECORD_AI=ollama                    # or lmstudio, openai, claude, ... or 0 for no call
+RECORD_AI_VISION_MODEL=qwen3-vl:8b  # optional: the model that reads the frames
+RECORD_AI_META_MODEL=qwen3-vl:8b    # optional: the model that writes title, tags, summary
+RECORD_AI_FRAMES=8                  # optional: frames one screen call carries
 ```
 
-Model ids are the ones the CLI lists itself. `install.sh` installs and checks
-none of the three. A model the CLI does not carry makes the call fail and the
-note says so, with the CLI's error in `.transcribe.log`; it never falls back to
-another model silently.
+**`ollama` and `lmstudio` are the setting to know about.** They are the only
+way to have the whole thing: a title, tags, a summary and a description of what
+was on screen, with the frames and the transcript never leaving the Mac, no
+account, no key and no bill. Pull a vision model first (`ollama pull
+qwen3-vl:8b`, or load one in LM Studio) and start the server; a model that
+cannot see images will write the summary and say nothing useful about the
+screen. With one model installed the config needs no model line at all: `record`
+asks the server what it has. With several, name the one you want, because the
+first one listed is whatever sorts first, not whatever is best.
+
+`RECORD_AI_URL` overrides the endpoint of any of them, which is how a second
+Mac on the network (`http://studio.local:11434/v1`), a gateway, or any other
+server that speaks the same protocol gets used without a name of its own here.
+The key is never passed on the command line: curl reads it from a file written
+`600` in the run's scratch directory and deleted with it.
+
+Model ids are the ones the backend lists itself. `install.sh` installs and
+checks none of this. A model that is not there makes the call fail and the note
+says so, with the endpoint's own words in `.transcribe.log`; it never falls back
+to another model silently. Neither does a server that is not running: the note
+names the address nothing answered at.
 
 ## Requirements
 
@@ -144,7 +181,7 @@ another model silently.
 | Disk | 574 MB once for the whisper model, then about 110 MB per recorded hour. See [Cost and footprint](#cost-and-footprint). |
 | Microphone | Any. Resolved on every start (built-in first, then any real microphone, never a loopback or meeting-app device), or pinned with `RECORD_MIC`. |
 | System audio | Nothing to install: no driver, no admin password, output device and volume keys untouched. See [Full call audio](#full-call-audio). |
-| An AI CLI | Optional, and the only paid, off-machine piece. Without it the note still lands with the full transcript and a generic title. |
+| An AI CLI, an API key, or a local model server | Optional, and the only piece that is ever paid or off-machine. Ollama or LM Studio on this Mac is neither. Without any of them the note still lands with the full transcript and a generic title. |
 
 ## Quickstart
 
@@ -198,9 +235,13 @@ every key.
 | `RECORD_SCREEN` | `0` | which `Capture screen N` is recorded; `record screens` lists them |
 | `RECORD_MIC` | empty | microphone by name, exactly as ffmpeg lists it; empty resolves one on every start |
 | `RECORD_SYSTEM_AUDIO` | `1` | `0` records the microphone alone: on headphones, only your own voice |
-| `RECORD_AI` | `claude` | `claude`, `cursor`, `copilot`, or `0` for no call and no egress |
-| `RECORD_AI_VISION_MODEL` | empty | model that reads the frames; empty is the CLI's default |
-| `RECORD_AI_META_MODEL` | empty | model that writes title, tags and summary; empty is the CLI's default |
+| `RECORD_AI` | `claude` | `claude`, `cursor`, `copilot`, `ollama`, `lmstudio`, `openai`, `anthropic`, `gemini`, `openrouter`, `custom`, or `0` for no call and no egress |
+| `RECORD_AI_VISION_MODEL` | empty | model that reads the frames; empty is the backend's default |
+| `RECORD_AI_META_MODEL` | empty | model that writes title, tags and summary; empty is the backend's default |
+| `RECORD_AI_URL` | empty | endpoint of the model server, ending at `/v1`; empty is the default of the backend named above, and it is required by `custom` |
+| `RECORD_AI_KEY` | empty | API key, when the provider's usual variable is not set; local servers need none |
+| `RECORD_AI_FRAMES` | `8` | frames one HTTP screen call carries, evenly spread; the CLIs read the frames themselves and ignore it |
+| `RECORD_AI_TIMEOUT` | `600` | seconds one HTTP call may take before curl gives up |
 | `RECORD_CLAUDE` | `1` | the old name of the off switch; `0` still means off |
 | `RECORD_DAYS` | `14` | this tool's own mp4 files older than this are deleted on the next start |
 | `RECORD_LAUNCH_APP` | empty | an app to open once the capture is up |
@@ -209,7 +250,8 @@ every key.
 
 Switches turn off on `0`, `no`, `off` or `false`; anything else, a typo
 included, leaves the feature on. `RECORD_AI` is the exception: an unknown name
-makes no call and the note says which name it found.
+makes no call and the note says which name it found, next to the list of the
+names that work.
 
 The cleanup on start is bounded to the top level of `RECORD_DIR` and to files
 named the way ffmpeg writes them, `2026-05-14_09-30.mp4`. Give it a directory
@@ -238,11 +280,13 @@ Read this before you record a meeting.
   and the system audio for the whole take. No exclusion list, no pause.
 - **Stays on the Mac:** the mp4 files and the transcription. Videos never
   enter the vault, so they never reach iCloud.
-- **Leaves the Mac:** only the optional AI CLI call. Per mp4, 8 to 30 frames
-  of your screen; per session, the first 30000 bytes of the transcript. They
-  go to that CLI's vendor and on to its model provider. `RECORD_AI=0` removes
-  it entirely: no call, no frames extracted. Details in
-  [SECURITY.md](SECURITY.md).
+- **Leaves the Mac:** only the optional AI call, and only when `RECORD_AI`
+  names something off this machine. Per mp4, the screen frames (8 to 30 for a
+  CLI, `RECORD_AI_FRAMES` of them for an API); per session, the first 30000
+  bytes of the transcript. They go to that vendor and on to its model
+  provider. `RECORD_AI=0` removes it entirely: no call, no frames extracted.
+  `RECORD_AI=ollama` or `lmstudio` keeps the call and sends it to a model on
+  this Mac, so nothing leaves either. Details in [SECURITY.md](SECURITY.md).
 - **Retention:** this tool's own mp4 files older than `RECORD_DAYS` go on the
   next start. Notes are never deleted.
 - **Other people:** the recording holds everyone on the call and what they
@@ -261,6 +305,8 @@ Read this before you record a meeting.
 | "System audio unavailable" | The helper could not start; its reason is in `$RECORD_DIR/.sysaudio.log`. Almost always the Screen Recording grant for skhd or your terminal. The take still runs, microphone only |
 | No red dot, recording running | `record status` is the reliable answer. The overlay runs detached and can give up silently after a wake on an external monitor |
 | No note appeared | The log is `$RECORD_DIR/.transcribe.log`. `Whisper model missing` means re-run `./install.sh`. A note titled `Recorded session` says in its first lines why the summary is missing |
+| "Nothing answered at http://localhost:11434/v1" | The local model server is not running, or is on another port. Start Ollama or LM Studio's server, or point `RECORD_AI_URL` at it |
+| Summary fine, screen section empty or useless | The model cannot see: pull a vision model (`ollama pull qwen3-vl:8b`) and name it in `RECORD_AI_VISION_MODEL`. The endpoint's own error, if there was one, is in `.transcribe.log` |
 | Note exists, Obsidian does not show it | `RECORD_NOTES` is outside any vault (no `.obsidian` above it). The stop said so and printed the path; set `RECORD_VAULT` |
 | Output stuck on `Record-Out` | Only after upgrading from a version before 0.3: `~/bin/record-audio down`, then pick your output in Sound settings |
 
@@ -290,13 +336,16 @@ removal command only for the paths it is safe to name.
 | Whisper model | 574 MB, once | `ggml-large-v3-turbo-q5_0.bin` |
 | CPU while recording | near zero, encoding is on the video hardware | `hevc_videotoolbox` |
 | AI calls per session | 1 per mp4 for the frames, 1 for the metadata, 0 with `RECORD_AI=0` | `record`, transcribe path |
-| Frames sent per mp4 | 8 to 30, spread over the file, 1400 px wide | `FRAME_MIN`, `FRAME_MAX` |
+| Frames sent per mp4 | 8 to 30, spread over the file, 1400 px wide, to a CLI | `FRAME_MIN`, `FRAME_MAX` |
+| Frames sent per mp4 | `RECORD_AI_FRAMES` of those, 8 by default, to a model server | `ai_pick_frames` in `record` |
 | Transcript sent | first 30000 bytes | `head -c 30000` before the metadata call |
 
-The AI calls are billed by the CLI's own plan. On Anthropic API credit the
-frames dominate and land between a few cents and roughly twenty cents per
-recorded hour; a Flash-class model through Copilot or Cursor is cheaper. These
-are estimates, and `RECORD_AI=0` makes it zero.
+The AI calls are billed by the CLI's own plan, or by the API key's. On
+Anthropic API credit the frames dominate and land between a few cents and
+roughly twenty cents per recorded hour; a Flash-class model through Copilot,
+Cursor or Gemini is cheaper. These are estimates. `RECORD_AI=0` makes it zero,
+and so does `ollama` or `lmstudio`: the cost there is the electricity and the
+minute or two your Mac spends on the frames.
 
 ## Components
 
@@ -310,7 +359,9 @@ are estimates, and `RECORD_AI=0` makes it zero.
 | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | local transcription |
 | [skhd](https://github.com/koekeishiya/skhd) | binds Option+R |
 | [Handy](https://github.com/cjpais/handy) | unrelated dictation app, installed only with `--with-handy` |
-| `claude`, `cursor-agent` or `copilot` | title, tags, summary, screen description: the only paid, off-machine piece |
+| `claude`, `cursor-agent` or `copilot` | title, tags, summary, screen description, through a CLI you already pay for |
+| [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) | the same four, from a model running on this Mac: no key, no bill, no egress. Neither is installed or required by this repo |
+| `curl` | carries every `RECORD_AI` that is a server rather than a CLI, local or hosted |
 | `docs/gen-svg.py` (this repo) | regenerates the SVGs above: `python3 docs/gen-svg.py docs` |
 
 ## Contributing and license

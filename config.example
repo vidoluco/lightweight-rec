@@ -34,17 +34,57 @@
 # alone, so on headphones only your own voice.
 # RECORD_SYSTEM_AUDIO=1
 
-# The CLI that writes the title, tags, summary and screen description, and the
-# only piece that sends anything off the Mac: claude, cursor or copilot. It has
-# to be installed and signed in already; install.sh does not touch it.
-# 0 never calls any of them: no egress, no title, tags, summary or screen text.
+# What writes the title, tags, summary and screen description. Either a CLI
+# you already have installed and signed in (install.sh does not touch it):
+#
+#   claude      cursor      copilot
+#
+# or a model server spoken to over HTTP, in the protocol they all share:
+#
+#   ollama      on this Mac, http://localhost:11434/v1, no key
+#   lmstudio    on this Mac, http://localhost:1234/v1, no key
+#   openai      OPENAI_API_KEY
+#   anthropic   ANTHROPIC_API_KEY
+#   gemini      GEMINI_API_KEY
+#   openrouter  OPENROUTER_API_KEY
+#   custom      anything else that speaks it: set RECORD_AI_URL
+#
+# ollama and lmstudio are the only settings in which the screen frames and the
+# transcript stay on this Mac and the note is still complete. 0 makes no call
+# at all: no egress, and no title, tags, summary or screen text either.
 # RECORD_AI=claude
 
-# The model each call uses, in the id the CLI itself lists. Empty picks the
-# CLI's default: claude sonnet then haiku, cursor cursor-grok-4.6-high,
-# copilot gemini-3.8-flash. Screen frames first, then title and summary.
+# The model each call uses, in the id the backend itself lists. Empty picks a
+# default: claude sonnet then haiku, cursor cursor-grok-4.6-high, copilot and
+# gemini gemini-3.8-flash, openai gpt-5.4-mini, anthropic claude-sonnet-5 then
+# claude-haiku-4-5, openrouter google/gemini-3.8-flash. For ollama and
+# lmstudio, empty means the first model the server lists, which is what you
+# want with one model installed and not what you want with five. Screen frames
+# first, then title and summary.
 # RECORD_AI_VISION_MODEL=""
 # RECORD_AI_META_MODEL=""
+
+# The endpoint, when it is not the default of the backend named above: another
+# Mac on the network, a gateway, a server on a port of its own. It must be the
+# base that has /chat/completions under it, so end it at /v1. Required by
+# RECORD_AI=custom, optional for everything else.
+# RECORD_AI_URL=""
+
+# The API key, when the provider's usual variable is not set or you would
+# rather keep it here. It never reaches the command line: curl reads it from a
+# file this script writes 600 in its scratch directory and deletes on the way
+# out. Local servers need none.
+# RECORD_AI_KEY=""
+
+# How many of the frames extracted from one video a single HTTP screen call
+# carries, evenly spread over the hour. A chat request holds every image it
+# names, so this is what keeps a local model on a laptop from being handed
+# thirty at once. The CLIs ignore it: they read the frames off disk themselves.
+# RECORD_AI_FRAMES=8
+
+# Seconds one HTTP call may take before curl gives up. A small model on a Mac
+# reading eight frames is slower than an API, so this is generous.
+# RECORD_AI_TIMEOUT=600
 
 # The old name of the off switch. 0 still means no call at all.
 # RECORD_CLAUDE=1

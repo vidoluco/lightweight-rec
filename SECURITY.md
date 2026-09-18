@@ -6,16 +6,15 @@ Read this before you run it near anyone else.
 
 ## It can run with zero egress
 
-Exactly one component ever leaves the machine, the optional AI CLI named by
-`RECORD_AI` (`claude`, `cursor` or `copilot`), and one line in
-`~/.config/record/config` removes it:
+Exactly one component ever leaves the machine, the optional AI pass named by
+`RECORD_AI`, and one line in `~/.config/record/config` removes it:
 
 ```bash
 RECORD_AI=0
 ```
 
-With that set, `record` makes no network request at all. It never invokes
-any of the three, and it does not even extract the JPEG frames that call would
+With that set, `record` makes no network request at all. It invokes no CLI and
+opens no socket, and it does not even extract the JPEG frames that call would
 have read, so no still of your screen is written anywhere, not even to the
 scratch directory. `RECORD_CLAUDE=0`, the switch's name in earlier releases,
 still means the same thing. ffmpeg still captures and whisper.cpp still transcribes, both
@@ -23,6 +22,25 @@ locally, and the note is still written with the complete transcript. What you
 give up is the title, the tags, the summary and the description of what was on
 screen; the note says so in place of the summary, so a reader is never left
 guessing whether the summary was lost or never asked for.
+
+**There is a second way to have no egress, and this one keeps the summary.**
+`RECORD_AI=ollama` or `RECORD_AI=lmstudio` sends the frames and the transcript
+to a model server on this Mac, over the loopback interface, and nothing crosses
+the network card:
+
+```bash
+RECORD_AI=ollama
+RECORD_AI_VISION_MODEL=qwen3-vl:8b   # a model you have pulled yourself
+```
+
+What that is worth saying precisely: the request still leaves `record`, and it
+still carries the screen frames and the transcript. It goes to a process
+running as you on this machine, one you installed and can stop. Whatever that
+server logs, it logs here. Point `RECORD_AI_URL` at another machine and this
+paragraph stops applying: it is then a normal network request to that host,
+over plain HTTP unless the URL says otherwise, and it is on you to know who
+runs it. The rest of this file treats every backend that is not the local two
+as egress, which is what it is.
 
 The switch turns off on `0`, `no`, `off` or `false`, in any case. Anything else,
 including a typo, leaves it on: a misspelling must not silently disable a
@@ -97,7 +115,7 @@ you assume you are private.
 | State | `$RECORD_DIR/.record.pid`, `.dot.pid`, `.session`, `.lock` (a directory), `.sysaudio.pid`, `.sysaudio.fifo`, `.sysaudio.ready`, `.record.log`, `.sysaudio.log`, `.transcribe.log` | process state, the pipe the system audio flows through while a take runs, ffmpeg and helper errors |
 | Whisper model | `$RECORD_DIR/.whisper/` | about 574 MB, not sensitive |
 | Note | `$RECORD_NOTES` (default `~/Documents/Obsidian/Recordings`) | full plaintext transcript, the model's description of the screen, and absolute paths to the mp4 files |
-| Temporary | one scratch directory per `record transcribe` run, `mktemp -d` under `$TMPDIR` | the 16 kHz wav and, unless `RECORD_AI` is off, the downscaled JPEG frames of the video being read, one video at a time. An `EXIT` trap removes the directory on every path out, a failed ffmpeg or whisper included |
+| Temporary | one scratch directory per `record transcribe` run, `mktemp -d` under `$TMPDIR` | the 16 kHz wav and, unless `RECORD_AI` is off, the downscaled JPEG frames of the video being read, one video at a time. With a server backend, also the request body being sent (the same frames, base64, and the transcript), the answer, and curl's config file, which holds the API key and is written `600`. An `EXIT` trap removes the directory on every path out, a failed ffmpeg or whisper included |
 
 Nothing is encrypted by this tool. FileVault, if it is on, encrypts the disk
 while the Mac is off or logged out, and that is the whole of it: once you log
@@ -131,43 +149,67 @@ it actually wrote the file. A note filed outside a vault is loud, not lost.
 ## The one egress, and the one line that removes it
 
 Every other component runs locally and touches no network. ffmpeg captures,
-whisper.cpp transcribes on your machine. The AI CLI is the single exception,
-and with `RECORD_AI` set to one of `claude`, `cursor` or `copilot` (`claude`
-is the default), `record transcribe` calls it in two ways:
+whisper.cpp transcribes on your machine. The AI pass is the single exception,
+and `record transcribe` makes it in two ways:
 
 1. Once per video file, with the vision model (`RECORD_AI_VISION_MODEL`),
    given the frames extracted from that file (JPEG scaled to 1400 px wide, 8
    to 30 of them spread over the hour). It reads and describes them, so those
-   images leave the machine. How they get there depends on the CLI: `claude`
+   images leave `record`. How they get there depends on the backend: `claude`
    is given their paths and its `Read` tool, `cursor-agent` opens them itself
    in read-only ask mode inside a workspace that is the scratch directory and
    nothing else, `copilot` receives them as attachments with every tool
-   switched off.
+   switched off, and a server backend receives `RECORD_AI_FRAMES` of them
+   (8 by default, evenly spread) base64-encoded inside the request body.
 2. Once for the whole session, with the metadata model (`RECORD_AI_META_MODEL`),
    given the first 30000 bytes of the transcript and the screen description,
-   to produce a title, tags and a summary. That text leaves the machine.
+   to produce a title, tags and a summary. That text leaves `record`.
 
-So the content of your screen at sampled instants, and what was said in the
-room, are transmitted to that CLI's vendor, Anthropic, Cursor or GitHub, and
-onward to whichever model provider the vendor routes the chosen model to, and
-processed under whatever plan the CLI is authenticated with. Retention and
-training behaviour are governed by that account's terms, not by anything in
-this repository. This is also the only component that is not free: it needs
-that vendor's paid subscription or credit. Everything else, the capture and
-the transcription included, runs here and costs nothing.
+Where it goes is the whole of the difference between the backends:
+
+| `RECORD_AI` | Where the frames and the transcript go |
+|---|---|
+| `0` | nowhere: no call, and no frames extracted either |
+| `ollama`, `lmstudio` | a server on this Mac, over loopback. Nothing reaches the network |
+| `claude`, `cursor`, `copilot` | Anthropic, Cursor or GitHub, and on to whichever model provider that vendor routes the model to, under the plan the CLI is signed in with |
+| `openai`, `anthropic`, `gemini`, `openrouter` | that provider's API over HTTPS, under the key you configured |
+| `custom` | wherever `RECORD_AI_URL` points, which only you know |
+
+For everything below the loopback line, the content of your screen at sampled
+instants and what was said in the room are transmitted to a third party and
+processed under that account's terms. Retention and training behaviour are
+governed by those terms, not by anything in this repository. Those are also
+the only settings that cost money. A local server and `RECORD_AI=0` cost
+nothing, and so does everything else here: the capture and the transcription
+run on your Mac either way.
+
+A server backend also makes one request before any of this: `GET {endpoint}/models`,
+to find out which model to ask for, and only when the config named none. It
+carries no recording of any kind. Failing it is how a server that is not
+running is reported, before a single frame is extracted.
+
+**The key.** `RECORD_AI_KEY`, or the provider's usual variable
+(`OPENAI_API_KEY` and so on), is passed to curl in a config file written `600`
+in the run's scratch directory and deleted with it, never on the command line,
+where `ps` would show it to anything running as you. It is not logged, not
+written to the note, and not printed by any subcommand. `record` sends it as a
+bearer token to the endpoint you configured and nowhere else.
 
 The default models are `sonnet` and `haiku` on `claude`, `cursor-grok-4.6-high`
-on `cursor`, `gemini-3.8-flash` on `copilot`. A model the CLI does not carry
-makes the call fail, and the note says so rather than falling back to another
-model silently: you should always be able to tell from the note what was sent
-where.
+on `cursor`, `gemini-3.8-flash` on `copilot` and on `gemini`, `gpt-5.4-mini` on
+`openai`, `claude-sonnet-5` and `claude-haiku-4-5` on `anthropic`,
+`google/gemini-3.8-flash` on `openrouter`, and on `ollama` and `lmstudio`
+whatever model the server lists first. A model the backend does not carry makes
+the call fail, and the note says so rather than falling back to another model
+silently: you should always be able to tell from the note what was sent where.
 
 Frame sampling is spread across the whole recording, so a call in which other
 people's video tiles or shared documents were on screen sends those images too.
 
 **Turning it off.** `RECORD_AI=0`, described at the top of this file, skips
 both calls and the frame extraction that feeds the first one. That is the
-supported off switch and the one to use.
+supported off switch and the one to use. `RECORD_AI=ollama` is the other
+answer: the calls happen, the note is complete, and nothing goes out.
 
 **If you never install it at all,** the result is nearly the same but not
 identical: the pipeline completes with the title `Recorded session`, the tag
@@ -176,7 +218,10 @@ not installed. A CLI that is installed but not signed in, out of credit or
 asked for a model it does not have leaves the same note, with a line pointing
 at `.transcribe.log`, where the CLI's own error is kept. In both cases the
 frames are still extracted to the scratch directory before the call fails.
-Prefer the config line.
+A server backend has the same shape and one better case: a missing API key, an
+endpoint that is not configured and a server that does not answer are all found
+before anything is extracted, so no still of your screen is written at all, and
+the note names which of the four it was. Prefer the config line.
 
 ## Retention
 
@@ -259,7 +304,8 @@ bounty. If a problem is urgent for you, stop the tool and delete the
 recordings rather than waiting for a patch.
 
 Scope is the code in this repository. ffmpeg, whisper.cpp, skhd,
-the `claude`, `cursor-agent` and `copilot` CLIs and whatever app you point
+the `claude`, `cursor-agent` and `copilot` CLIs, Ollama, LM Studio or whatever
+else answers at `RECORD_AI_URL`, and whatever app you point
 `RECORD_LAUNCH_APP` at are
 upstream projects with their own reporting channels, and issues in them should
 go there. Reports about how this repository uses them unsafely are in scope and
