@@ -49,6 +49,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   backends are egress and which are not, and the `any-cli.svg` drawing now
   cycles through the local and hosted servers too.
 
+### Fixed
+
+- A local model that answers without the labels keeps its title. The metadata
+  prompt shows `TITLE:`, `TAGS:` and `SUMMARY:` as the shape of the answer;
+  the three CLIs write them back, and a small local model reads them as
+  placeholders and sends the three values alone. Nothing matched, and the note
+  was filed as "Recorded session" tagged `recording` with no summary and no
+  sign that a good answer had been thrown away. The prompt now says the labels
+  are part of the answer, and the labels are also put back when the reply is
+  exactly the three lines that were asked for and none of them is labelled.
+  Anything else keeps the generic title and says out loud that the title and
+  summary were lost, rather than guessing at them.
+- An answer of nothing but blank lines no longer ends the run before the note
+  is written. `grep -v` exits 1 when it prints nothing, and under `set -e` that
+  status was taken by the assignment it fed.
+
 ## [0.3.0] - 2026-09-09
 
 Verified end to end on Apple Silicon, macOS 26: a real take with the
