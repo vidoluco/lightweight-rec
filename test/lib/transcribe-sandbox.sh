@@ -193,6 +193,9 @@ EOF
   # which is where the API key has to be and the command line must not be.
   #   RECORD_TEST_HTTP_DOWN=1   nothing is listening: curl exits 7, no body
   #   RECORD_TEST_AI_FAIL=name  the endpoint refuses that model, as an API does
+  #   RECORD_TEST_AI_BARE=1     the three values with the labels dropped, which
+  #                             is what a small local model actually answers
+  #   RECORD_TEST_AI_PROSE=1    a paragraph with no label and no three lines
   cat > "$bin/curl" <<'EOF'
 #!/bin/bash
 # Stub curl: the real one would send the screen frames and the transcript to
@@ -249,7 +252,13 @@ case "$url" in
     say '{"object":"list","data":[{"id":"stub-model","object":"model"}]}' ;;
   */chat/completions)
     if [ -n "$body" ] && grep -q 'TITLE:' "$body"; then
-      say '{"choices":[{"message":{"role":"assistant","content":"TITLE: Stub session\nTAGS: stub test\nSUMMARY: A stubbed session written by the test suite. Nothing was transcribed."}}]}'
+      if [ -n "${RECORD_TEST_AI_BARE:-}" ]; then
+        say '{"choices":[{"message":{"role":"assistant","content":"Bare stub session\nbare stub test\nA stubbed session whose model dropped the labels. Nothing was transcribed."}}]}'
+      elif [ -n "${RECORD_TEST_AI_PROSE:-}" ]; then
+        say '{"choices":[{"message":{"role":"assistant","content":"Sure! Here is a summary of the session you asked about, written as a paragraph because that is how I felt like answering it today."}}]}'
+      else
+        say '{"choices":[{"message":{"role":"assistant","content":"TITLE: Stub session\nTAGS: stub test\nSUMMARY: A stubbed session written by the test suite. Nothing was transcribed."}}]}'
+      fi
     else
       say '{"choices":[{"message":{"role":"assistant","content":"The frames showed a stubbed listing written by the test suite, with no readable text of its own to copy."}}]}'
     fi ;;

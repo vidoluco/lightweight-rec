@@ -238,6 +238,50 @@ out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
 urls | has_line 'http://studio.local:1234/v1/chat/completions' || bad "custom: RECORD_AI_URL was not used: $(urls | tr '\n' ' ')"
 grep -q '^# Stub session' "$(the_note "$notes")" || bad "custom: the note did not take the stubbed title"
 
+# ------------------------------------------- a model that drops the labels
+# The metadata prompt shows TITLE:, TAGS: and SUMMARY: as the shape of the
+# answer. A coding CLI writes them back; a small local model reads them as
+# placeholders and sends the three values alone. Gemma 4 E4B on LM Studio does
+# exactly this, and before the labels were put back the good answer was thrown
+# away in silence: the note came out "Recorded session", tagged "recording",
+# with no summary and nothing anywhere saying a title had been lost.
+prepare bare
+out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
+  RECORD_AI=lmstudio RECORD_TEST_AI_BARE=1 \
+  RECORD_TEST_ARGV="$argv" RECORD_TEST_HTTP="$http") && rc=0 || rc=$?
+[ "$rc" -eq 0 ] || bad "bare: record transcribe exited $rc"
+note=$(the_note "$notes")
+[ -n "$note" ] || bad "bare: no note written"
+grep -q '^# Bare stub session' "$note" || bad "bare: the title was dropped instead of read in order: $(basename "${note:-none}")"
+grep -q '^tags: \[bare,stub,test\]' "$note" || bad "bare: the tags were dropped: $(grep '^tags:' "$note" || echo none)"
+grep -q 'whose model dropped the labels' "$note" || bad "bare: the summary was dropped"
+printf '%s\n' "$out" | grep -q 'without the TITLE/TAGS/SUMMARY labels' \
+  || bad "bare: the run does not say the answer was read in order"
+# Read in order is a recovery, not a failure: the note must not also claim the
+# model went quiet.
+grep -q 'did not answer for part or all of this note' "$note" \
+  && bad "bare: a recovered answer is reported as a silent model"
+
+# ------------------------------------------ a model that answers in prose
+# Three lines is what makes the order readable. A paragraph is not, so nothing
+# is guessed at: the fallback title stands and the note says so out loud,
+# which is the difference between a note that lost something and a note that
+# quietly looks fine.
+prepare prose
+out=$(run_transcribe "$ROOT" "$sb" "$bin" "$tmp" "$dir" "$vault" "$notes" \
+  RECORD_AI=lmstudio RECORD_TEST_AI_PROSE=1 \
+  RECORD_TEST_ARGV="$argv" RECORD_TEST_HTTP="$http") && rc=0 || rc=$?
+[ "$rc" -eq 0 ] || bad "prose: record transcribe exited $rc"
+note=$(the_note "$notes")
+[ -n "$note" ] || bad "prose: no note written"
+grep -q '^# Recorded session' "$note" || bad "prose: unreadable prose was used as a title anyway"
+grep -q 'did not answer for part or all of this note' "$note" \
+  || bad "prose: the note does not say the title and summary were lost"
+printf '%s\n' "$out" | grep -q 'answered in a shape with no TITLE/TAGS/SUMMARY line' \
+  || bad "prose: the log does not say why the metadata was skipped"
+# The screen section is a separate call and must survive a useless metadata answer.
+grep -q '^## What was on screen' "$note" || bad "prose: the screen section was lost too"
+
 if [ "$fail" -ne 0 ]; then
   echo "ai_http_backend: failed"
   exit 1

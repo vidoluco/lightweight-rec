@@ -311,10 +311,11 @@ AI_RULES="Write in English what the screen showed. Hard rules:
 
 AI_EYES="You are the eyes of someone who missed this meeting and has to remember it."
 
-AI_ASK="This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text:
+AI_ASK="This is the audio transcript and screen description of a work session or meeting recorded on a computer. Reply in EXACTLY three lines, no other text. Start each line with its label, written out literally, colon included:
 TITLE: <max 6 words, in English, specific to the content>
 TAGS: <2-4 short kebab-case tags separated by space, e.g. meeting standup planning>
-SUMMARY: <2-3 sentences on the content and any decisions>"
+SUMMARY: <2-3 sentences on the content and any decisions>
+The words TITLE:, TAGS: and SUMMARY: are part of the answer, not placeholders to replace: keep them."
 
 # At most RECORD_AI_FRAMES of the lines on stdin, evenly spread over them, the
 # first and the last always kept. A CLI is handed the whole hour's worth of
@@ -871,6 +872,28 @@ $descr
         META=""
       fi
       [ -n "$META" ] || AI_SILENT=1
+      # A coding CLI echoes the labels back; a small local model often reads
+      # them as placeholders and answers with the three values alone. That
+      # parsed as nothing, and the note came out titled "Recorded session",
+      # tagged "recording", with no summary and no sign that a good answer had
+      # been thrown away. When the reply is exactly the three lines that were
+      # asked for and not one of them is labelled, the order is the only thing
+      # those lines can be, so put the labels back. Anything else is said out
+      # loud instead of being guessed at.
+      if [ -n "$META" ] && [ -z "$(printf '%s\n' "$META" | grep '^\(TITLE\|TAGS\|SUMMARY\):')" ]; then
+        BARE=$(printf '%s\n' "$META" | grep -v '^[[:space:]]*$')
+        if [ "$(printf '%s\n' "$BARE" | wc -l | tr -d ' ')" = 3 ]; then
+          META=$(printf '%s\n' "$BARE" | awk '
+            NR == 1 { print "TITLE: " $0 }
+            NR == 2 { print "TAGS: " $0 }
+            NR == 3 { print "SUMMARY: " $0 }')
+          echo "$AI answered without the TITLE/TAGS/SUMMARY labels; read in order instead." >&2
+        else
+          echo "Title, tags and summary skipped: $AI answered in a shape with no TITLE/TAGS/SUMMARY line in it." >&2
+          META=""
+          AI_SILENT=1
+        fi
+      fi
       # Copilot wraps what it prints at 100 columns, terminal or not, so a
       # summary of any length arrives as several lines and only the first
       # would be kept. Fold every continuation line back onto its field.
