@@ -221,6 +221,14 @@ Closed the lid without stopping? The hours already written are intact and
 `record stop` the next morning transcribes them. A segment left unreadable is
 skipped and named in the note; the rest still becomes the note.
 
+Speech recognition runs locally in five-minute sections. Repetitive or
+implausibly short results are retried minute by minute, with timestamps
+restored to the video timeline. If a retry is still suspect, the note marks
+that minute as **Unreliable transcription** and points you back to the video
+instead of presenting invented speech as a complete transcript. Quiet audio,
+overlapping speakers and unfamiliar terminology can still be misheard; review
+the recording before quoting or publishing a transcript.
+
 ## Configuration
 
 Machine-specific settings go in `~/.config/record/config`, the one file
@@ -305,6 +313,7 @@ Read this before you record a meeting.
 | "System audio unavailable" | The helper could not start; its reason is in `$RECORD_DIR/.sysaudio.log`. Almost always the Screen Recording grant for skhd or your terminal. The take still runs, microphone only |
 | No red dot, recording running | `record status` is the reliable answer. The overlay runs detached and can give up silently after a wake on an external monitor |
 | No note appeared | The log is `$RECORD_DIR/.transcribe.log`. `Whisper model missing` means re-run `./install.sh`. A note titled `Recorded session` says in its first lines why the summary is missing |
+| Repeated phrases or marked gaps in the transcript | Inspect the video at the marked timestamps. Repetition triggers a shorter local retry, but automatic recognition cannot certify every word; `.transcribe.log` records the rechecks |
 | "Nothing answered at http://localhost:11434/v1" | The local model server is not running, or is on another port. Start Ollama or LM Studio's server, or point `RECORD_AI_URL` at it |
 | Summary fine, screen section empty or useless | The model cannot see: pull a vision model (`ollama pull qwen3-vl:8b`) and name it in `RECORD_AI_VISION_MODEL`. The endpoint's own error, if there was one, is in `.transcribe.log` |
 | Note exists, Obsidian does not show it | `RECORD_NOTES` is outside any vault (no `.obsidian` above it). The stop said so and printed the path; set `RECORD_VAULT` |
