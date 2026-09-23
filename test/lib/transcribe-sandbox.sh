@@ -118,7 +118,7 @@ for a in "$@"; do
       exit 90 ;;
   esac
 done
-echo '[00:00:00.000 --> 00:00:04.000]  Stub transcript for the test suite.'
+echo '[00:00:00.000 --> 00:00:04.000]  Stub transcript for the test suite with enough words to resemble recorded speech.'
 EOF
 
   cat > "$bin/claude" <<'EOF'

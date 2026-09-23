@@ -559,6 +559,69 @@ stop_audio() {
   return 0
 }
 
+transcript_suspect() {
+  printf '%s\n' "$1" | awk -v minimum="$2" '
+    {
+      sub(/^\[[^]]*\][[:space:]]*/, "")
+      gsub(/[^[:alnum:]]+/, " ")
+      n = split(tolower($0), tokens, " ")
+      for (i = 1; i <= n; i++) {
+        if (tokens[i] == "") continue
+        words++
+        previous[words % 5] = tokens[i]
+        if (words >= 5) {
+          phrase = ""
+          for (j = words - 4; j <= words; j++)
+            phrase = phrase " " previous[j % 5]
+          if (++seen[phrase] >= 5) repeated = 1
+        }
+      }
+    }
+    END { exit !(repeated || words < minimum) }
+  '
+}
+
+timestamp_at() {
+  local seconds="$1"
+  printf '%02d:%02d:%02d.000' "$((seconds / 3600))" "$(((seconds / 60) % 60))" "$((seconds % 60))"
+}
+
+shift_transcript() {
+  awk -v offset="$1" '
+    function shifted(t, parts, total) {
+      split(t, parts, ":")
+      total = parts[1] * 3600 + parts[2] * 60 + parts[3] + offset
+      return sprintf("%02d:%02d:%06.3f", int(total / 3600), int(total / 60) % 60, total % 60)
+    }
+    /^\[[0-9][0-9]:/ {
+      start = substr($0, 2, 12)
+      end = substr($0, 19, 12)
+      print "[" shifted(start) " --> " shifted(end) "]" substr($0, 32)
+      next
+    }
+    NF { print }
+  '
+}
+
+transcribe_interval() {
+  local source="$1" start="$2" length="$3" kind="$4" audio result
+  audio="$WORK/$kind-$start.wav"
+  if ! ffmpeg -y -hide_banner -loglevel error -ss "$start" -t "$length" \
+       -i "$source" -ar 16000 -ac 1 "$audio" 2>"$WORK/segment.err"; then
+    echo "Audio segment at $(timestamp_at "$start") could not be decoded." >&2
+    cat "$WORK/segment.err" >&2
+    return 1
+  fi
+  if ! result=$(whisper-cli -m "$MODEL" -f "$audio" -l auto -np 2>"$WORK/whisper.err"); then
+    echo "Speech recognition failed at $(timestamp_at "$start")." >&2
+    tail -5 "$WORK/whisper.err" >&2
+    rm -f "$audio"
+    return 1
+  fi
+  rm -f "$audio"
+  printf '%s\n' "$result"
+}
+
 cmd="${1:-start}"
 case "$cmd" in
 
@@ -791,26 +854,46 @@ case "$cmd" in
         rm -f "$wav"
         continue
       fi
-      # -l auto: a meeting can switch language mid sentence, and forcing one
-      # language mistranscribes everything said in the other.
-      # timestamps stay: they are the correlation with the video.
-      # Guarded like the ffmpeg call above, and for the same reason. `|| true`
-      # was worse than no guard: it produced a heading with nothing under it,
-      # discarded the error, left the file out of SKIPPED, and let the note
-      # claim the transcript was complete. An hour lost that way is
-      # indistinguishable from an hour in which nobody spoke.
-      # stderr is kept apart from the transcript: whisper.cpp 0.17 announces
-      # its backends there on every run, and captured with 2>&1 those lines
-      # opened every transcript section in the note. It is shown only when
-      # the run failed, which is when it says something.
-      if ! chunk=$(whisper-cli -m "$MODEL" -f "$wav" -l auto -np 2>"$WORK/whisper.err"); then
-        echo "Skipped $(basename "$f"): whisper-cli failed to transcribe it."
-        tail -5 "$WORK/whisper.err" 2>/dev/null | sed 's/^/  /'
+      duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$wav" 2>"$WORK/duration.err") || duration=""
+      seconds=$(awk -v d="$duration" 'BEGIN { if (d > 0) printf "%.0f", d }')
+      if [ -z "$seconds" ] || [ "$seconds" -eq 0 ]; then
+        echo "Skipped $(basename "$f"): audio duration unavailable."
         SKIPPED="$SKIPPED
-- \`$f\` (transcription failed)"
+- \`$f\` (audio duration unavailable)"
         rm -f "$wav"
         continue
       fi
+      chunk=""
+      for ((start=0; start<seconds; start+=300)); do
+        length=$((seconds - start))
+        [ "$length" -gt 300 ] && length=300
+        minimum=12
+        [ "$length" -lt 300 ] && minimum=8
+        [ "$length" -lt 60 ] && minimum=1
+        if primary=$(transcribe_interval "$wav" "$start" "$length" chunk) &&
+           ! transcript_suspect "$primary" "$minimum"; then
+          chunk="$chunk
+$(printf '%s\n' "$primary" | shift_transcript "$start")"
+          continue
+        fi
+        echo "Rechecking $(basename "$f") at $(timestamp_at "$start"): missing or repetitive speech." >&2
+        for ((minute=start; minute<start+length; minute+=60)); do
+          span=$((start + length - minute))
+          [ "$span" -gt 60 ] && span=60
+          minimum=8
+          [ "$span" -lt 60 ] && minimum=1
+          if recovered=$(transcribe_interval "$wav" "$minute" "$span" minute) &&
+             ! transcript_suspect "$recovered" "$minimum"; then
+            chunk="$chunk
+$(printf '%s\n' "$recovered" | shift_transcript "$minute")"
+          else
+            end=$((minute + span))
+            chunk="$chunk
+[$(timestamp_at "$minute") --> $(timestamp_at "$end")]   [Unreliable transcription: no speech could be confirmed automatically.]"
+            echo "Unreliable transcription in $(basename "$f") at $(timestamp_at "$minute")." >&2
+          fi
+        done
+      done
       rm -f "$wav"
       TEXT="$TEXT
 ## $(basename "$f" .mp4 | tr '_' ' ')
@@ -933,6 +1016,11 @@ $descr
       echo "# $TITLE"
       echo
       [ -n "$SUMMARY" ] && { echo "$SUMMARY"; echo; }
+      if [[ "$TEXT" == *"[Unreliable transcription:"* ]]; then
+        echo "**Some audio intervals could not be transcribed reliably.**"
+        echo "Check the marked timestamps against the original video before quoting them."
+        echo
+      fi
       # Every reason gets said. An absent CLI used to produce a note identical
       # to a deliberate off switch, with the error swallowed by 2>/dev/null, so
       # the reader had no way to tell a choice from a fault.
