@@ -20,6 +20,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   with an external display picks the screen per take instead of editing
   `RECORD_SCREEN`. Option+R still records `Capture screen 0`.
 
+### Fixed
+
+- A take started while the previous one is still transcribing gets its note.
+  The finishing transcription deleted `.session` unconditionally, which by then
+  was the marker of the take now recording, so that take's stop logged "No
+  session to transcribe." and its video never reached the vault. The
+  transcription now removes the marker only if it is still the one it started
+  from.
+
 ## [0.4.0] - 2026-09-18
 
 Verified end to end on Apple Silicon, macOS 26, against LM Studio serving

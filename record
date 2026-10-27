@@ -831,6 +831,12 @@ case "$cmd" in
     WORK=$(mktemp -d -t record-work)
     trap 'rm -rf "$WORK"' EXIT
 
+    # The marker this run started from, mtime kept. A take started while this
+    # one transcribes touches the same file, and deleting it at the end took
+    # that take's marker with it: its own stop found "No session to
+    # transcribe." and the video never got a note.
+    cp -p "$SESSION" "$WORK/session"
+
     AI_SILENT=0
     AI_WHY=""
     AI_KEY_VAR=""
@@ -1133,7 +1139,9 @@ $descr
       echo "$TEXT"
     } > "$NOTE"
 
-    rm -f "$SESSION"
+    # Only the marker this run started from: a newer one belongs to a take
+    # that is recording now, and its stop needs it.
+    [ "$SESSION" -nt "$WORK/session" ] || rm -f "$SESSION"
     echo "Note created: $NOTE"
     if [ -z "$VAULT_ROOT" ]; then
       echo
